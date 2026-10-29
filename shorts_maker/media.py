@@ -112,6 +112,8 @@ def load_audio(path: Path, sr: int, channels: int = 1, tempo: float = 1.0) -> np
 def layout_filter(layout: str, size: tuple[int, int], crop_x: str | None = None) -> str:
     """[0:v]를 세로 화면 [base]로 바꾸는 filter_complex. layout "smart"는 crop_x(시간 t에 대한 식) 위치를 잘라 낸다."""
     w, h = size
+    if layout == "vertical":  # 이미 세로로 만든 영상 (장면을 이어 붙인 본편)
+        return f"[0:v]scale={w}:{h},setsar=1[base]"
     if layout == "smart" and crop_x is not None:  # 높이를 맞추고, 피사체를 따라 가로 위치를 옮기며 자름
         return f"[0:v]scale=-2:{h},crop={w}:{h}:x='{crop_x}':y=0,setsar=1[base]"
     if layout in ("crop", "smart"):
@@ -123,6 +125,45 @@ def layout_filter(layout: str, size: tuple[int, int], crop_x: str | None = None)
         f"[fgsrc]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]"
     )
+
+
+SEGMENT_ENCODE = ["-r", "30", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-an"]
+
+
+def source_segment(src: Path, start: float, end: float, out: Path, layout: str, size: tuple[int, int],
+                   crop_x_for=None) -> None:
+    """원본 start~end를 세로 화면(size) 장면 하나로. layout "smart"면 crop_x_for(잘라 낸 영상)가 crop x 식을 준다."""
+    raw = out.with_name(f"{out.stem}_raw.mp4")
+    run_ffmpeg(["-ss", f"{start:.3f}", "-i", str(src), "-t", f"{end - start:.3f}", *SEGMENT_ENCODE, str(raw)])
+    crop_x = crop_x_for(raw) if layout == "smart" and crop_x_for else None
+    run_ffmpeg(["-i", str(raw), "-filter_complex", layout_filter(layout, size, crop_x), "-map", "[base]",
+                *SEGMENT_ENCODE, str(out)])
+    raw.unlink(missing_ok=True)
+
+
+def fit_generated(src: Path, seconds: float, out: Path, size: tuple[int, int]) -> None:
+    """AI로 만든 장면 클립을 seconds 길이의 세로 화면 장면으로. 짧으면 앞으로·뒤로 재생을 이어 붙여(핑퐁) 채운다."""
+    w, h = size
+    fill = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
+    duration = probe(src).duration
+    if duration + 0.05 >= seconds:
+        run_ffmpeg(["-i", str(src), "-t", f"{seconds:.3f}", "-vf", fill, *SEGMENT_ENCODE, str(out)])
+        return
+    pingpong = src.with_name(f"{src.stem}_pingpong.mp4")
+    if not pingpong.exists():
+        run_ffmpeg(["-i", str(src), "-filter_complex", "[0:v]split[a][b];[b]reverse[r];[a][r]concat=n=2:v=1[v]",
+                    "-map", "[v]", *SEGMENT_ENCODE, str(pingpong)])
+    run_ffmpeg(["-stream_loop", "-1", "-i", str(pingpong), "-t", f"{seconds:.3f}", "-vf", fill,
+                *SEGMENT_ENCODE, str(out)])
+
+
+def concat_segments(segments: list[Path], out: Path, hold_sec: float = 0.0) -> None:
+    """같은 형식으로 만든 장면들을 순서대로 잇는다. hold_sec만큼 마지막 화면을 멈춰 늘린다."""
+    listing = out.with_suffix(".txt")
+    listing.write_text("".join(f"file '{p.resolve().as_posix()}'\n" for p in segments), encoding="utf-8")
+    hold = ["-vf", f"tpad=stop_mode=clone:stop_duration={hold_sec:.3f}"] if hold_sec > 0 else []
+    run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), *hold, *SEGMENT_ENCODE, str(out)])
+    listing.unlink(missing_ok=True)
 
 
 def layout_frame(video: Path, t: float, layout: str, size: tuple[int, int], crop_x: str | None = None) -> bytes:
@@ -153,12 +194,12 @@ def render_short(
     graph = f"{base};[base]ass={ass_name}:fontsdir={fonts_dirname}[out]"
     run_ffmpeg(
         [
-            "-i", str(video), "-i", str(audio),
+            "-i", str(video.resolve()), "-i", str(audio.resolve()),
             "-filter_complex", graph,
             "-map", "[out]", "-map", "1:a",
             "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart", str(out),
+            "-shortest", "-movflags", "+faststart", str(out.resolve()),
         ],
         cwd=cwd,
     )

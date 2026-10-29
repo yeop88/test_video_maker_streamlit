@@ -335,6 +335,32 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
     return [tidy(got.get(i, "")) for i in range(len(items))]
 
 
+class PromptText(BaseModel):
+    prompt: str
+
+
+VISUAL_PROMPT = """You write prompts for an image/video generation model.
+Turn the user's scene description (often Korean) into one English prompt: subject, setting, action, lighting, camera.
+Keep it under 40 words. No text, letters, logos or watermarks in the scene. Output only the prompt."""
+
+MUSIC_PROMPT = """You write prompts for a music generation model (MusicGen).
+Turn the user's request (often Korean) into one short English prompt: genre, mood, instruments, tempo.
+Instrumental only, no vocals. Under 25 words. Output only the prompt."""
+
+
+def english_prompt(model: str, text: str, kind: str = "visual") -> str:
+    """장면·음악 설명을 생성 모델용 영어 프롬프트로. 이미 영어면 그대로 쓴다."""
+    text = text.strip()
+    if not text or not re.search(r"[가-힣]", text):
+        return text
+    system = VISUAL_PROMPT if kind == "visual" else MUSIC_PROMPT
+    result = _ask_until_ok(
+        model, [{"role": "system", "content": system}, {"role": "user", "content": text}], PromptText,
+        lambda r: ["영어로만 쓰세요."] if re.search(r"[가-힣]", r.prompt) or not r.prompt.strip() else [], 3,
+    )
+    return result.prompt.strip() if result and not re.search(r"[가-힣]", result.prompt) else text
+
+
 ORDINAL_WORDS = {"첫": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7}
 ORDINAL = re.compile(r"(첫|둘|셋|넷|다섯|여섯|일곱)째|(첫|두|세|네|다섯|여섯|일곱)\s?번째|(첫)\s?(?:번째|단계|팁)")
 

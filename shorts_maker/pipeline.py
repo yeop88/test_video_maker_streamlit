@@ -17,7 +17,7 @@ import numpy as np
 import soundfile as sf
 from PIL import Image
 
-from . import config, extras, llm, media, mixing, music, reframe, subtitles
+from . import config, extras, generate, llm, media, mixing, music, reframe, subtitles
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
@@ -221,12 +221,17 @@ def split_long_clips(job: Job, clips: list[dict]) -> list[dict]:
     return out
 
 
-def narrate(job: Job, clips: list[dict], model: str, style: str) -> list[dict]:
-    """구간마다 그 시간의 장면 설명과 대사를 보여 주고 나레이션을 쓴다."""
-    items = [
-        {"start": c["start"], "end": c["end"], "excerpt": llm.timeline_text(job.frames, job.segments, c["start"], c["end"])}
-        for c in clips
-    ]
+def narrate(job: Job | None, clips: list[dict], model: str, style: str) -> list[dict]:
+    """구간마다 그 시간의 장면 설명과 대사를 보여 주고 나레이션을 쓴다. AI 장면은 장면 설명(프롬프트)을 보여 준다."""
+    items = []
+    for c in clips:
+        if c.get("kind") == "ai":
+            seconds = float(c.get("seconds", 5.0))
+            excerpt = f"[AI로 만든 장면] {c.get('prompt_ko') or c.get('prompt', '')}"
+            items.append({"start": 0.0, "end": seconds, "excerpt": excerpt})
+        else:
+            items.append({"start": c["start"], "end": c["end"],
+                          "excerpt": llm.timeline_text(job.frames, job.segments, c["start"], c["end"])})
     texts = llm.write_narrations(model, items, style)
     return [{**c, "narration": t} for c, t in zip(clips, texts)]
 
@@ -275,6 +280,9 @@ def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
     """
     fixed = []
     for clip in clips:
+        if clip.get("kind") == "ai":  # AI 장면은 원본 시간과 상관없음
+            fixed.append(clip)
+            continue
         a = min(max(0.0, float(clip["start"])), job.duration)
         b = min(max(0.0, float(clip["end"])), job.duration)
         # 3초 안쪽이면 대사 경계까지 넓힌다. Whisper 문장 끝 시간은 실제보다 조금 이를 때가 있어서
@@ -289,7 +297,8 @@ def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
 
     merged: list[dict] = []
     for clip in fixed:
-        if merged and merged[-1]["start"] <= clip["start"] < merged[-1]["end"]:
+        if (merged and clip.get("kind") != "ai" and merged[-1].get("kind") != "ai"
+                and merged[-1]["start"] <= clip["start"] < merged[-1]["end"]):
             prev = merged[-1]
             prev["end"] = max(prev["end"], clip["end"])
             prev["narration"] = f"{prev['narration']} {clip['narration']}".strip()
@@ -299,27 +308,42 @@ def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
 
 
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
+#
+# 카드 두 종류:
+#   원본 구간  {kind: "source"(기본), start, end, narration}
+#   AI 장면    {kind: "ai", prompt(영어), engine("image"|"video"), seed, seconds, narration}
+# 카드마다 세로 화면 장면을 만들어 잇고, 마지막에 자막·제목·소리를 입힌다.
+
+
+def is_ai(clip: dict) -> bool:
+    return clip.get("kind") == "ai"
 
 
 def split_sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?…~])\s+", text.strip()) if s.strip()]
 
 
-def fit_clips(job: Job, clips: list[dict], speech_sec: list[float]) -> list[tuple[float, float]]:
+def fit_clips(job: Job | None, clips: list[dict], speech_sec: list[float]) -> list[tuple[float, float]]:
     """나레이션이 구간보다 길면 구간 끝을 늘리고 (다음 구간과 겹치지 않게), 모자라면 앞을 늘린다.
+    AI 장면은 나레이션 길이에 맞춰 그대로 늘린다 ((0, 길이)로 돌려줌).
 
     그래도 넘친 나레이션은 다음 구간에서 이어서 나오므로, 넘친 만큼 다음 구간이 더 길어야 한다.
     """
     spans = []
     overflow = 0.0
     for i, (clip, speech) in enumerate(zip(clips, speech_sec)):
-        a, b = clip["start"], clip["end"]
         start_at = max(LEAD_SEC, overflow - TAIL_SEC + config.NARRATION_GAP) if overflow > 0 else LEAD_SEC
         need = start_at + speech + TAIL_SEC if speech > 0 else overflow
-        # 다음·앞 구간이 시간상으로도 뒤·앞에 있을 때만 그 경계를 넘지 않게 한다 (카드 순서를 바꾼 경우 대비)
-        nxt = clips[i + 1]["start"] if i + 1 < len(clips) else job.duration
+        if is_ai(clip):
+            spans.append((0.0, round(max(float(clip.get("seconds", 5.0)), need, MIN_CLIP_SEC), 2)))
+            overflow = 0.0
+            continue
+        a, b = clip["start"], clip["end"]
+        # 다음·앞 원본 구간이 시간상으로도 뒤·앞에 있을 때만 그 경계를 넘지 않게 한다 (카드 순서를 바꾼 경우 대비)
+        nxt = next((c["start"] for c in clips[i + 1:] if not is_ai(c)), job.duration)
         limit = nxt if nxt > a else job.duration
-        floor = spans[-1][1] if spans and spans[-1][1] <= a else 0.0
+        prev = [(s, c) for s, c in zip(spans, clips) if not is_ai(c)]
+        floor = prev[-1][0][1] if prev and prev[-1][0][1] <= a else 0.0
         if b - a < need:  # 늘린 끝이 원본 대사 중간이면 대사가 끝나는 곳까지 (안 되면 시작 전까지)
             b = _safe_cut(job, min(limit, a + need), a + MIN_CLIP_SEC, limit, prefer_later=True)
         if b - a < need:
@@ -329,8 +353,19 @@ def fit_clips(job: Job, clips: list[dict], speech_sec: list[float]) -> list[tupl
     return spans
 
 
+def _crop_x_for(video: Path) -> str | None:
+    """피사체 따라 크롭의 crop x 식 (세로로 자를 여유가 있는 가로 영상일 때만)."""
+    w, h = config.OUTPUT_SIZE
+    info = media.probe(video)
+    scaled_w = int(round(info.width * h / info.height / 2)) * 2
+    if scaled_w <= w + 8:
+        return None
+    track = reframe.smooth(reframe.subject_positions(video, info.width, info.height))
+    return reframe.crop_x_expression(track, scaled_w, w)
+
+
 def make_short(
-    job: Job,
+    job: Job | None,
     title: str,
     clips: list[dict],
     engine,
@@ -347,12 +382,20 @@ def make_short(
     music_path: Path | None = None,
     music_gain: float = 0.25,
     music_duck: float = 0.4,
+    work_dir: Path | None = None,
+    on_status: Callable[[str], None] = lambda message: None,
 ) -> tuple[Path, list[dict]]:
-    """out_dir에 결과를 저장한다 (기본은 job.dir). 다시 분석해도 지워지지 않게 작업 폴더의 results/를 쓴다."""
+    """카드(원본 구간·AI 장면)로 쇼츠 한 편을 만든다. 영상 없이 AI 장면만으로도 된다 (job=None, work_dir 필요).
+    out_dir에 결과를 저장한다 (기본은 작업 폴더). 다시 분석해도 지워지지 않게 작업 폴더의 results/를 쓴다."""
     if not clips:
         raise RuntimeError("쇼츠에 넣을 구간이 없습니다.")
+    if job is None and any(not is_ai(c) for c in clips):
+        raise RuntimeError("원본 영상이 없어서 원본 구간 카드는 쓸 수 없습니다.")
+    work = work_dir or job.dir
+    work.mkdir(parents=True, exist_ok=True)
 
     # 1) 문장마다 나레이션 음성을 만든다 (문장 단위라 자막 시간을 정확히 맞출 수 있음)
+    on_status("🎙️ 나레이션 음성 만들기")
     sentences = [split_sentences(c["narration"]) for c in clips]
     total_sentences = sum(len(s) for s in sentences)
     voices: list[list[np.ndarray]] = []
@@ -361,7 +404,7 @@ def make_short(
     for group in sentences:
         wavs, times = [], []
         for text in group:
-            path = engine.synthesize_cached(text, job.dir / "tts")
+            path = engine.synthesize_cached(text, work / "tts")
             wav, lead = mixing.load_speech(path)
             wavs.append(wav)
             times.append((engine.word_timings(path), lead))
@@ -373,7 +416,7 @@ def make_short(
         sum(len(w) for w in wavs) / SR + config.NARRATION_GAP * max(0, len(wavs) - 1) for wavs in voices
     ]
 
-    # 2) 나레이션 길이에 맞춰 구간을 늘린다
+    # 2) 나레이션 길이에 맞춰 구간을 늘린다 (AI 장면은 나레이션 길이만큼)
     spans = fit_clips(job, clips, speech_sec)
     total = sum(b - a for a, b in spans)
 
@@ -400,12 +443,12 @@ def make_short(
             status = f"마지막 화면 {end_sec - total + TAIL_SEC:.1f}초 멈춤"
         elif end_sec > offset + (b - a):
             status = "다음 장면까지 이어짐"
-        elif (b - a) - (clip["end"] - clip["start"]) > 0.05:
+        elif not is_ai(clip) and (b - a) - (clip["end"] - clip["start"]) > 0.05:
             status = "나레이션에 맞춰 늘림"
         else:
             status = "OK"
         report.append({
-            "원본 구간": f"{a:.1f}~{b:.1f}초",
+            "원본 구간": f"AI 장면 ({clip.get('engine', 'image')})" if is_ai(clip) else f"{a:.1f}~{b:.1f}초",
             "쇼츠 위치": f"{offset:.1f}~{offset + b - a:.1f}초",
             "나레이션(초)": round(sec, 1),
             "상태": status,
@@ -420,47 +463,72 @@ def make_short(
         r["end"] = min(r["end"], total)
         r["words"] = [(a, min(b, total)) for a, b in r.get("words", []) if a < total]
 
-    # 4) 원본 소리를 같은 구간으로 잘라 이어 붙이고, 나레이션이 나올 때만 줄여서 섞는다
-    original = media.load_audio(job.audio, SR, 2)
-    original = np.concatenate([original[int(a * SR) : int(b * SR)] for a, b in spans])
-    sf.write(job.dir / "narration.wav", narration, SR)  # 확인용
-    mixed = job.dir / "mixed.wav"
+    # 4) AI 장면 만들기 (이미지 장면은 정해진 길이로, 영상 장면은 약 4초 → 길이에 맞춰 늘림)
+    ai_items = [(i, c) for i, c in enumerate(clips) if is_ai(c)]
+    assets: dict[int, Path] = {}
+    if ai_items:
+        on_status(f"🎨 AI 장면 {len(ai_items)}개 만들기 (처음에는 모델을 불러오느라 오래 걸립니다)")
+        scenes = [{"prompt": c["prompt"], "engine": c.get("engine", "image"), "seed": int(c.get("seed", 0)),
+                   "seconds": spans[i][1]} for i, c in ai_items]
+        for (i, _), path in zip(ai_items, generate.scene_clips(scenes)):
+            assets[i] = path
+
+    # 5) 카드마다 세로 화면 장면을 만들어 잇는다
+    on_status("🎬 장면 이어 붙이기")
+    w, h = config.OUTPUT_SIZE
+    seg_dir = work / "segments"
+    if seg_dir.exists():
+        shutil.rmtree(seg_dir)
+    seg_dir.mkdir()
+    segments = []
+    for i, (clip, (a, b)) in enumerate(zip(clips, spans)):
+        seg = seg_dir / f"seg{i:02d}.mp4"
+        if is_ai(clip):
+            media.fit_generated(assets[i], b - a, seg, (w, h))
+        else:
+            media.source_segment(job.video, a, b, seg, layout, (w, h), crop_x_for=_crop_x_for)
+        segments.append(seg)
+    body = work / "body.mp4"
+    media.concat_segments(segments, body, hold_sec=hold)
+
+    # 6) 원본 소리(원본 구간만)·나레이션·배경음악 섞기. 나레이션이 나올 때만 원본 소리와 배경음악을 줄인다
+    original_full = media.load_audio(job.audio, SR, 2) if job else None
+    parts = []
+    for clip, (a, b) in zip(clips, spans):
+        if is_ai(clip) or original_full is None:
+            parts.append(np.zeros((int((b - a) * SR), 2), np.float32))
+        else:
+            parts.append(original_full[int(a * SR): int(b * SR)])
+    original = np.concatenate(parts) if parts else np.zeros((0, 2), np.float32)
+    sf.write(work / "narration.wav", narration, SR)  # 확인용
+    mixed = work / "mixed.wav"
     bed = music.bed(music_path, total) if music_path else None
     music_track = mixing.mix(original, narration, original_gain, duck_gain, mixed, bed, music_gain, music_duck)
     if music_track is not None:
-        sf.write(job.dir / "music.wav", music_track, SR)  # 확인용 (섞인 배경음악만)
+        sf.write(work / "music.wav", music_track, SR)  # 확인용 (섞인 배경음악만)
 
-    # 5) 영상 자르고 잇기 → 세로 변환 + 자막
-    cut = job.dir / "cut.mp4"
-    media.cut_and_concat(job.video, spans, cut, hold_sec=hold)
-
+    # 7) 자막·제목 입히기
+    on_status("📝 자막 입히기")
     font_file, family = subtitles.find_korean_font()
-    fonts = job.dir / "fonts"
+    fonts = work / "fonts"
     fonts.mkdir(exist_ok=True)
     if not (fonts / font_file.name).exists():
         shutil.copy(font_file, fonts / font_file.name)
-    w, h = config.OUTPUT_SIZE
     cues = subtitles.build_cues(rows, subtitles.chars_per_line(font_size, w))
     subtitles.write_ass(
-        cues, job.dir / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
+        cues, work / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
         title=title, title_end=total,
         highlight=highlight_color if subtitle_style == "karaoke" else None,
     )
-    out_dir = out_dir or job.dir
+    out_dir = out_dir or work
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"shorts_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
-    crop_x = None
-    if layout == "smart":  # 피사체 따라 자르기 (세로로 자를 여유가 있는 가로 영상일 때만)
-        info = media.probe(cut)
-        scaled_w = int(round(info.width * h / info.height / 2)) * 2
-        if scaled_w > w + 8:
-            track = reframe.smooth(reframe.subject_positions(cut, info.width, info.height))
-            crop_x = reframe.crop_x_expression(track, scaled_w, w)
-    media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir, crop_x=crop_x)
-    # 함께 내보내는 파일: 같은 이름의 .srt(자막)와 .jpg(썸네일)
+    media.render_short(body, mixed, "subs.ass", "fonts", out, "vertical", (w, h), cwd=work)
+
+    # 함께 내보내는 파일: 같은 이름의 .srt(자막)와 .jpg(썸네일, 자막을 입히기 전 장면에서)
     extras.write_srt(rows, out.with_suffix(".srt"))
     frames = [
-        Image.frombytes("RGB", (w, h), media.layout_frame(cut, total * (i + 0.5) / 6, layout, (w, h), crop_x)[: w * h * 3])
+        Image.frombytes("RGB", (w, h), media.layout_frame(body, total * (i + 0.5) / 6, "vertical", (w, h))[: w * h * 3])
         for i in range(6)
     ]
     extras.make_thumbnail(frames, title or (clips[0]["narration"][:20] if clips else ""), font_file, out.with_suffix(".jpg"))

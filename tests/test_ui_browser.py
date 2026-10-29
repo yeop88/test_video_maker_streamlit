@@ -196,6 +196,40 @@ def test_voice_library(page):
     page.wait_for_timeout(1500)
 
 
+def test_ai_scene_card(page):
+    """✨ AI 장면 추가 → 한글 장면 설명·나레이션 → 🎨 만들기 → 카드에 미리보기 영상."""
+    cards = page.locator('[class*="st-key-cardbox_"]')
+    n = cards.count()
+    page.get_by_role("button", name="✨ AI 장면 추가").first.click()
+    page.wait_for_timeout(1500)
+    check("AI 장면 카드 추가", cards.count() == n + 1)
+    card = cards.nth(n)
+    card.get_by_label("장면 설명 (한글로 써도 됩니다)").fill("안개 낀 호숫가의 작은 나무 오두막, 새벽")
+    card.get_by_label("장면 설명 (한글로 써도 됩니다)").press("Control+Enter")
+    page.wait_for_timeout(800)
+    card.get_by_label("나레이션 (자막)").fill("호숫가 작은 오두막에서 조용한 아침을 맞습니다.")
+    card.get_by_label("나레이션 (자막)").press("Control+Enter")
+    page.wait_for_timeout(1200)
+    t = time.time()
+    card.get_by_role("button", name="🎨 만들기").click()
+    page.locator('[class*="st-key-cardbox_"]').nth(n).locator("video").wait_for(timeout=300000)
+    check("🎨 만들기 → 카드에 AI 장면 미리보기", True, f"{time.time() - t:.0f}초")
+
+
+def test_ai_music(page):
+    """사이드바 ✨ AI로 음악 만들기 → 보관함에 들어가고 바로 골라짐."""
+    side = page.locator('[data-testid="stSidebar"]')
+    side.get_by_text("✨ AI로 음악 만들기").click()
+    side.get_by_label("어떤 음악?").fill("잔잔한 피아노 아침")
+    side.get_by_label("어떤 음악?").press("Enter")
+    page.wait_for_timeout(800)
+    t = time.time()
+    side.get_by_role("button", name="음악 만들기").click()
+    side.get_by_text("AI 음악을 만들어 보관함에 넣었습니다").wait_for(timeout=300000)
+    picked = side.get_by_role("combobox", name="배경음악").input_value()
+    check("AI 음악 만들기 → 바로 골라짐", "잔잔한 피아노" in picked, f"{picked}, {time.time() - t:.0f}초")
+
+
 def test_full_flow(page, lake: Path, out: Path):
     open_app(page)
     drag(page, 700, 140, lake)
@@ -211,6 +245,8 @@ def test_full_flow(page, lake: Path, out: Path):
     title = page.get_by_label("제목 (화면 위쪽)").input_value()
     check("제목", len(title) >= 4, title)
     test_cards(page)
+    test_ai_scene_card(page)
+    test_ai_music(page)
 
     t = time.time()
     page.get_by_role("button", name="✍️ 나레이션만 다시 쓰기").click()
@@ -229,6 +265,8 @@ def test_full_flow(page, lake: Path, out: Path):
         check("3단계 → 결과", False, errors[:5])
         raise
     check("3단계 → 결과", page.locator("video").count() >= 2, f"{time.time() - t:.0f}초")
+    report_text = page.locator('[class*="st-key-result_"]').first.inner_text()
+    check("결과에 AI 장면 포함", "AI 장면" in page.inner_text('[data-testid="stMain"]') or "AI" in report_text)
     with page.expect_download() as dl:
         page.get_by_role("button", name="⬇️ 다운로드").click()
     path = out / dl.value.suggested_filename

@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, llm, media, music, pipeline, presets, project, tts, voices
+from shorts_maker import config, generate, llm, media, music, pipeline, presets, project, tts, voices
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -250,6 +250,8 @@ with st.sidebar:
 
     st.markdown("**🎵 배경음악**")
     tracks = {t["id"]: t for t in music.list_tracks()}
+    if "pending_bgm" in ss:  # 방금 만든 AI 음악을 고른다 (위젯을 그리기 전에만 값을 바꿀 수 있음)
+        ss.bgm_track = ss.pop("pending_bgm")
     if ss.bgm_track not in tracks:
         ss.bgm_track = ""
     st.selectbox(
@@ -261,6 +263,22 @@ with st.sidebar:
         st.audio(str(tracks[ss.bgm_track]["path"]))
         setting_slider("배경음악 크기", "bgm_gain")
         setting_slider("나레이션 중 배경음악 크기", "bgm_duck", help="나레이션이 나오는 동안 배경음악을 이 비율로 줄입니다.")
+    with st.expander("✨ AI로 음악 만들기"):
+        gen_ok, gen_msg = generate.available()
+        st.text_input("어떤 음악?", key="ai_music_desc", placeholder="예: 잔잔한 피아노, 평화로운 아침")
+        st.slider("길이 (초)", 10, 30, 20, 5, key="ai_music_sec", help="쇼츠가 더 길면 겹쳐 이어 반복합니다.")
+        if st.button("음악 만들기", disabled=not gen_ok, help=gen_msg or "MusicGen으로 배경음악을 만듭니다 (20초 곡에 약 40초).",
+                     width="stretch"):
+            desc = ss.get("ai_music_desc", "").strip() or "calm ambient background music"
+            with st.spinner("음악을 만드는 중..."):
+                try:
+                    prompt = llm.english_prompt(ss.llm_model, desc, "music") if models else desc
+                    wav = generate.music(prompt, float(ss.ai_music_sec))
+                    ss.pending_bgm = music.add_generated(wav, desc[:20], prompt)
+                    ss.preset_msg = ("success", f"AI 음악을 만들어 보관함에 넣었습니다: {prompt}")
+                except RuntimeError as e:
+                    ss.preset_msg = ("error", str(e)[:300])
+            st.rerun()
     with st.expander("음악 올리기"):
         st.file_uploader("음악 파일", type=music.MUSIC_TYPES, key="bgm_upload", label_visibility="collapsed")
         st.button("보관함에 넣기", on_click=add_music_upload, disabled=ss.get("bgm_upload") is None, width="stretch",
@@ -387,7 +405,7 @@ def card_key(uid: str, field: str) -> str:
 def sync_cards(short: dict) -> None:
     """카드 입력칸에 쓴 값을 저장된 구간에 반영한다 (버튼 콜백에서 순서를 바꾸기 전에 호출)."""
     for clip in short["clips"]:
-        for field in ("start", "end", "narration"):
+        for field in ("start", "end", "narration", "prompt_ko", "seconds", "engine"):
             key = card_key(clip["uid"], field)
             if key in ss:
                 clip[field] = ss[key]
@@ -409,7 +427,8 @@ def card_action(p: project.Project, short: dict, uid: str, action: str) -> None:
 
 def add_card(p: project.Project, short: dict, duration: float) -> None:
     sync_cards(short)
-    start = short["clips"][-1]["end"] if short["clips"] else 0.0
+    source = [c for c in short["clips"] if c.get("kind") != "ai"]
+    start = source[-1]["end"] if source else 0.0
     start = min(start, max(0.0, duration - 5.0))
     short["clips"].append({"uid": project.new_id(), "start": round(start, 1),
                            "end": round(min(duration, start + 5.0), 1), "narration": ""})
@@ -417,11 +436,97 @@ def add_card(p: project.Project, short: dict, duration: float) -> None:
     refresh_cards()
 
 
-def clip_cards(p: project.Project, short: dict, job: pipeline.Job) -> list[dict]:
-    """구간마다 카드 하나: 구간 재생, 시작·끝, 나레이션, 순서 바꾸기·삭제. 고친 값을 저장하고 구간 목록을 돌려준다."""
+def add_ai_card(p: project.Project, short: dict) -> None:
+    sync_cards(short)
+    short["clips"].append({"uid": project.new_id(), "kind": "ai", "prompt_ko": "", "prompt": "", "engine": "image",
+                           "seed": int(project.new_id()[:4], 16), "seconds": 5.0, "narration": ""})
+    project.save(p)
+    refresh_cards()
+
+
+def ensure_prompt(clip: dict) -> None:
+    """장면 설명(한글 가능)을 생성 모델용 영어 프롬프트로 (설명이 바뀌었을 때만 다시 번역)."""
+    text = clip.get("prompt_ko", "").strip()
+    if text and clip.get("prompt_src") != text:
+        clip["prompt"] = llm.english_prompt(llm_model, text) if llm_model else text
+        clip["prompt_src"] = text
+
+
+def preview_scene(p: project.Project, short: dict, uid: str, new_seed: bool) -> None:
+    sync_cards(short)
+    clip = next(c for c in short["clips"] if c["uid"] == uid)
+    if not clip.get("prompt_ko", "").strip():
+        ss.flash = "장면 설명을 먼저 써 주세요."
+        return
+    if new_seed:
+        clip["seed"] = int(clip.get("seed", 0)) + 1
+    try:
+        ensure_prompt(clip)
+        path = generate.scene_clips([{"prompt": clip["prompt"], "engine": clip.get("engine", "image"),
+                                      "seed": int(clip.get("seed", 0)), "seconds": float(clip.get("seconds", 5.0))}])[0]
+        clip["preview"] = str(path)
+    except RuntimeError as e:
+        ss.flash = str(e)[:300]
+    project.save(p)
+    refresh_cards()
+
+
+def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
+    """AI 장면 카드: 미리보기·만들기, 방식·길이, 장면 설명, 나레이션."""
+    uid = clip["uid"]
+    with st.container(border=True, key=f"cardbox_{uid}"):
+        col_media, col_opts, col_text = st.columns([1.3, 1, 3])
+        with col_media:
+            preview = Path(clip.get("preview", ""))
+            if clip.get("preview") and preview.exists():
+                st.video(str(preview))
+            else:
+                st.info("🎨 아직 만들지 않은 AI 장면")
+            gen_ok, gen_msg = generate.available()
+            col_make, col_again = st.columns(2)
+            make = col_make.button("🎨 만들기", key=f"gen_{uid}", disabled=not gen_ok,
+                                   help=gen_msg or "이 장면을 미리 만들어 봅니다.", width="stretch")
+            again = col_again.button("🎲 다른 그림", key=f"regen_{uid}", disabled=not gen_ok,
+                                     help="같은 설명으로 다른 장면을 만듭니다.", width="stretch")
+            if make or again:
+                with st.spinner("AI 장면을 만드는 중... (처음에는 모델을 불러오느라 오래 걸립니다)"):
+                    preview_scene(p, short, uid, again)
+                st.rerun()
+        with col_opts:
+            st.markdown(f"**장면 {i + 1}** · ✨ AI")
+            engine = st.selectbox("만드는 방식", list(generate.ENGINES), format_func=lambda e: generate.ENGINES[e].split(" (")[0],
+                                  index=list(generate.ENGINES).index(clip.get("engine", "image")), key=card_key(uid, "engine"))
+            seconds = st.number_input("길이(초)", 2.0, 15.0, float(clip.get("seconds", 5.0)), 0.5, format="%.1f",
+                                      key=card_key(uid, "seconds"), help="나레이션이 더 길면 나레이션 길이만큼 늘어납니다.")
+            card_buttons(p, short, uid, i)
+        with col_text:
+            prompt_ko = st.text_area("장면 설명 (한글로 써도 됩니다)", clip.get("prompt_ko", ""), height=68,
+                                     key=card_key(uid, "prompt_ko"), placeholder="예: 안개 낀 호숫가의 작은 나무 오두막, 새벽")
+            narration = st.text_area("나레이션 (자막)", clip["narration"], height=90, key=card_key(uid, "narration"))
+            st.caption(f"{len(narration)}자 / 권장 {int(seconds * config.NARRATION_CHARS_PER_SECOND)}자")
+    if (engine, seconds, prompt_ko, narration) != (clip.get("engine"), clip.get("seconds"), clip.get("prompt_ko"), clip["narration"]):
+        if engine != clip.get("engine") or prompt_ko != clip.get("prompt_ko"):
+            clip.pop("preview", None)  # 설명이나 방식을 바꾸면 미리보기는 다시 만들어야 함
+        clip.update(engine=engine, seconds=seconds, prompt_ko=prompt_ko, narration=narration)
+        project.save(p)
+
+
+def card_buttons(p: project.Project, short: dict, uid: str, i: int) -> None:
+    b_up, b_down, b_del = st.columns(3)
+    b_up.button("⬆", key=f"up_{uid}", help="앞으로", disabled=i == 0, on_click=card_action, args=(p, short, uid, "up"))
+    b_down.button("⬇", key=f"down_{uid}", help="뒤로", disabled=i + 1 == len(short["clips"]),
+                  on_click=card_action, args=(p, short, uid, "down"))
+    b_del.button("🗑", key=f"del_{uid}", help="이 카드 빼기", on_click=card_action, args=(p, short, uid, "delete"))
+
+
+def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None) -> list[dict]:
+    """카드마다: 원본 구간(구간 재생, 시작·끝) 또는 AI 장면, 나레이션, 순서 바꾸기·삭제. 고친 값을 저장하고 카드 목록을 돌려준다."""
     cps = config.NARRATION_CHARS_PER_SECOND
     for i, clip in enumerate(short["clips"]):
         uid = clip["uid"]
+        if clip.get("kind") == "ai":
+            ai_card(p, short, clip, i)
+            continue
         with st.container(border=True, key=f"cardbox_{uid}"):
             col_media, col_time, col_text = st.columns([1.3, 1, 3])
             with col_media:
@@ -432,12 +537,7 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job) -> list[dict]
                                         key=card_key(uid, "start"))
                 end = st.number_input("끝(초)", 0.0, job.duration, float(clip["end"]), 0.1, format="%.1f",
                                       key=card_key(uid, "end"))
-                b_up, b_down, b_del = st.columns(3)
-                b_up.button("⬆", key=f"up_{uid}", help="앞으로", disabled=i == 0,
-                            on_click=card_action, args=(p, short, uid, "up"))
-                b_down.button("⬇", key=f"down_{uid}", help="뒤로", disabled=i + 1 == len(short["clips"]),
-                              on_click=card_action, args=(p, short, uid, "down"))
-                b_del.button("🗑", key=f"del_{uid}", help="이 구간 빼기", on_click=card_action, args=(p, short, uid, "delete"))
+                card_buttons(p, short, uid, i)
             with col_text:
                 narration = st.text_area("나레이션 (자막)", clip["narration"], height=130, key=card_key(uid, "narration"))
                 limit = int(max(0.0, end - start) * cps)
@@ -451,9 +551,15 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job) -> list[dict]
         if (start, end, narration) != (clip["start"], clip["end"], clip["narration"]):
             clip.update(start=start, end=end, narration=narration)  # 고친 값을 바로 저장 (새로고침해도 남음)
             project.save(p)
-    st.button("➕ 구간 추가", key=f"add_{short['id']}", on_click=add_card, args=(p, short, job.duration),
-              help="마지막 구간 뒤 5초를 새 카드로 추가합니다. 시간을 고쳐 원하는 장면을 고르세요.")
-    return [c for c in short["clips"] if c["end"] > c["start"]]
+    col_add, col_add_ai = st.columns(2)
+    if job is not None:
+        col_add.button("➕ 구간 추가", key=f"add_{short['id']}", on_click=add_card, args=(p, short, job.duration),
+                       help="마지막 구간 뒤 5초를 새 카드로 추가합니다. 시간을 고쳐 원하는 장면을 고르세요.", width="stretch")
+    gen_ok, gen_msg = generate.available()
+    col_add_ai.button("✨ AI 장면 추가", key=f"addai_{short['id']}", on_click=add_ai_card, args=(p, short),
+                      disabled=not gen_ok, width="stretch",
+                      help=gen_msg or "원본에 없는 장면(인트로·마무리·설명 그림 등)을 AI로 만들어 넣습니다.")
+    return [c for c in short["clips"] if c.get("kind") == "ai" or c["end"] > c["start"]]
 
 
 def make_plan(p: project.Project, on_progress=None) -> None:
@@ -527,7 +633,13 @@ def make_engine():
 
 def build_short(p: project.Project, short: dict, engine) -> None:
     """쇼츠 한 편을 만들어 결과 기록에 넣는다."""
-    clips = pipeline.normalize_clips(p.job, [c for c in short["clips"] if c["end"] > c["start"]])
+    cards = [c for c in short["clips"] if c.get("kind") == "ai" or c["end"] > c["start"]]
+    for c in cards:
+        if c.get("kind") == "ai":
+            if not c.get("prompt_ko", "").strip():
+                raise RuntimeError(f"'{short['title']}'에 장면 설명이 비어 있는 AI 장면이 있습니다.")
+            ensure_prompt(c)
+    clips = pipeline.normalize_clips(p.job, cards) if p.job else cards
     if not clips:
         raise RuntimeError(f"'{short['title']}'에 쓸 구간이 없습니다.")
     bar = st.progress(0.0, text=f"🎙️ {short['title']} 나레이션 음성")
@@ -538,6 +650,7 @@ def build_short(p: project.Project, short: dict, engine) -> None:
         out_dir=p.dir / "results",
         subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
         music_path=music.track_path(ss.bgm_track), music_gain=ss.bgm_gain, music_duck=ss.bgm_duck,
+        work_dir=p.job.dir if p.job else p.dir / "render", on_status=st.write,
     )
     p.results.insert(0, {
         "id": project.new_id(), "short_id": short["id"], "title": short["title"],
@@ -578,11 +691,19 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
             st.rerun()
 
     raw_clips = clip_cards(p, short, job)
-    clips = pipeline.normalize_clips(job, raw_clips)  # 쇼츠를 만들 때 쓰는 구간 (범위 맞춤, 대사 경계, 겹침 합치기)
+    # 쇼츠를 만들 때 쓰는 카드 (원본 구간은 범위 맞춤, 대사 경계, 겹침 합치기)
+    clips = pipeline.normalize_clips(job, raw_clips) if job else raw_clips
 
     col_info, col_renarrate = st.columns([3, 1])
     with col_info:
-        st.caption(f"구간 {len(clips)}개 · 원본 구간 합계 {sum(c['end'] - c['start'] for c in clips):.1f}초")
+        source = [c for c in clips if c.get("kind") != "ai"]
+        ai = [c for c in clips if c.get("kind") == "ai"]
+        parts = []
+        if source:
+            parts.append(f"원본 구간 {len(source)}개 {sum(c['end'] - c['start'] for c in source):.1f}초")
+        if ai:
+            parts.append(f"AI 장면 {len(ai)}개 {sum(float(c.get('seconds', 5)) for c in ai):.1f}초")
+        st.caption(" · ".join(parts) or "카드가 없습니다.")
         if len(clips) < len(raw_clips):
             st.caption("⚠️ 겹치는 구간은 쇼츠를 만들 때 하나로 합쳐집니다.")
     with col_renarrate:
