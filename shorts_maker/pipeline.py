@@ -16,8 +16,9 @@ from typing import Callable
 
 import numpy as np
 import soundfile as sf
+from PIL import Image
 
-from . import config, llm, media, mixing, music, reframe, subtitles
+from . import config, extras, llm, media, mixing, music, reframe, subtitles
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
@@ -440,4 +441,11 @@ def make_short(
             track = reframe.smooth(reframe.subject_positions(cut, info.width, info.height))
             crop_x = reframe.crop_x_expression(track, scaled_w, w)
     media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir, crop_x=crop_x)
+    # 함께 내보내는 파일: 같은 이름의 .srt(자막)와 .jpg(썸네일)
+    extras.write_srt(rows, out.with_suffix(".srt"))
+    frames = [
+        Image.frombytes("RGB", (w, h), media.layout_frame(cut, total * (i + 0.5) / 6, layout, (w, h), crop_x)[: w * h * 3])
+        for i in range(6)
+    ]
+    extras.make_thumbnail(frames, title or (clips[0]["narration"][:20] if clips else ""), font_file, out.with_suffix(".jpg"))
     return out, report

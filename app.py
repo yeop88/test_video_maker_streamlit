@@ -521,7 +521,9 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
 # ───────────────────────── 결과 기록 ─────────────────────────
 def delete_result(p: project.Project, result_id: str) -> None:
     for r in [r for r in p.results if r["id"] == result_id]:
-        Path(r["video"]).unlink(missing_ok=True)
+        video = Path(r["video"])
+        for path in (video, video.with_suffix(".srt"), video.with_suffix(".jpg")):
+            path.unlink(missing_ok=True)
         p.results.remove(r)
     project.save(p)
     ss.flash = "결과를 지웠습니다."
@@ -541,7 +543,15 @@ if proj.results:
             with col, st.container(border=True, key=f"result_{result['id']}"):
                 badge = "🆕 " if result is proj.results[0] else ""
                 st.markdown(f"**{badge}{result['title'] or '(제목 없음)'}**")
-                st.video(result["video"])
+                video_path = Path(result["video"])
+                tab_video, tab_thumb = st.tabs(["영상", "썸네일"])
+                with tab_video:
+                    st.video(result["video"])
+                with tab_thumb:
+                    if video_path.with_suffix(".jpg").exists():
+                        st.image(str(video_path.with_suffix(".jpg")), width="stretch")
+                    else:
+                        st.caption("썸네일이 없습니다 (이전 버전에서 만든 결과).")
                 st.caption(f"{result['created']} · {result.get('duration', '?')}초")
                 if result.get("summary"):
                     st.caption(result["summary"])
@@ -554,5 +564,12 @@ if proj.results:
                 )
                 col_del.button("🗑", key=f"delres_{result['id']}", help="이 결과 지우기",
                                on_click=delete_result, args=(proj, result["id"]))
+                col_srt, col_jpg = st.columns(2)
+                for col_x, suffix, label, mime in ((col_srt, ".srt", "자막 SRT", "application/x-subrip"),
+                                                   (col_jpg, ".jpg", "썸네일 JPG", "image/jpeg")):
+                    extra = video_path.with_suffix(suffix)
+                    if extra.exists():
+                        col_x.download_button(f"⬇️ {label}", data=extra.read_bytes(), key=f"dl{suffix}_{result['id']}",
+                                              file_name=f"{Path(proj.name).stem}_{stamp}{suffix}", mime=mime, width="stretch")
                 with st.expander("구간별 나레이션 길이"):
                     st.dataframe(result["report"], hide_index=True, width="stretch")

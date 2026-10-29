@@ -109,6 +109,30 @@ def load_audio(path: Path, sr: int, channels: int = 1, tempo: float = 1.0) -> np
     return np.frombuffer(raw, dtype=np.float32).reshape(-1, channels).copy()
 
 
+def layout_filter(layout: str, size: tuple[int, int], crop_x: str | None = None) -> str:
+    """[0:v]를 세로 화면 [base]로 바꾸는 filter_complex. layout "smart"는 crop_x(시간 t에 대한 식) 위치를 잘라 낸다."""
+    w, h = size
+    if layout == "smart" and crop_x is not None:  # 높이를 맞추고, 피사체를 따라 가로 위치를 옮기며 자름
+        return f"[0:v]scale=-2:{h},crop={w}:{h}:x='{crop_x}':y=0,setsar=1[base]"
+    if layout in ("crop", "smart"):
+        return f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[base]"
+    return (  # blur: 원본은 가운데, 위아래는 흐린 배경
+        "[0:v]split=2[bgsrc][fgsrc];"
+        f"[bgsrc]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+        "boxblur=25:2,eq=brightness=-0.08[bg];"
+        f"[fgsrc]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]"
+    )
+
+
+def layout_frame(video: Path, t: float, layout: str, size: tuple[int, int], crop_x: str | None = None) -> bytes:
+    """자막 없이 세로로 바꾼 t초 장면 (RGB 바이트). crop_x 식이 원래 시간을 쓰도록 -ss를 입력 뒤에 둔다."""
+    return run_ffmpeg([
+        "-i", str(video), "-ss", f"{t:.2f}", "-filter_complex", layout_filter(layout, size, crop_x),
+        "-map", "[base]", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ])
+
+
 def render_short(
     video: Path,
     audio: Path,
@@ -120,24 +144,12 @@ def render_short(
     cwd: Path,
     crop_x: str | None = None,
 ) -> None:
-    """세로 영상으로 변환하고 자막을 입힌다. layout "smart"는 crop_x(시간 t에 대한 식) 위치를 잘라 낸다.
+    """세로 영상으로 변환하고 자막을 입힌다.
 
-    ass 필터는 Windows 경로(C:\\...)의 콜론을 파싱하지 못하므로,
+    ass 필터는 Windows 경로(C:\...)의 콜론을 파싱하지 못하므로,
     자막과 폰트는 cwd 기준 상대 경로로 넘긴다.
     """
-    w, h = size
-    if layout == "smart" and crop_x is not None:  # 높이를 맞추고, 피사체를 따라 가로 위치를 옮기며 자름
-        base = f"[0:v]scale=-2:{h},crop={w}:{h}:x='{crop_x}':y=0,setsar=1[base]"
-    elif layout in ("crop", "smart"):
-        base = f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[base]"
-    else:  # blur: 원본은 가운데, 위아래는 흐린 배경
-        base = (
-            "[0:v]split=2[bgsrc][fgsrc];"
-            f"[bgsrc]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
-            "boxblur=25:2,eq=brightness=-0.08[bg];"
-            f"[fgsrc]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
-            "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]"
-        )
+    base = layout_filter(layout, size, crop_x)
     graph = f"{base};[base]ass={ass_name}:fontsdir={fonts_dirname}[out]"
     run_ffmpeg(
         [

@@ -315,6 +315,21 @@ for t in TESTS:
         "subs_within_video": bool(cues) and cues[-1][1] <= oi.duration + 0.05,
         "no_narration_cut": r["narration_cut"] == 0,
     }
+    # 함께 내보내는 파일: SRT(문장마다 하나, 시간 순서, 영상 안), 썸네일(1080x1920 JPG)
+    srt = out.with_suffix(".srt")
+    blocks = [b.split("\n") for b in srt.read_text(encoding="utf-8").strip().split("\n\n")] if srt.exists() else []
+    def srt_sec(x):
+        h, m, rest = x.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(rest.replace(",", "."))
+    spans_srt = [tuple(srt_sec(x) for x in b[1].split(" --> ")) for b in blocks if len(b) >= 3]
+    r["srt_blocks"] = len(spans_srt)
+    checks["srt_one_per_sentence"] = len(spans_srt) == len(split_sentences_all(clips))
+    checks["srt_in_order_in_video"] = bool(spans_srt) and all(
+        a < b <= oi.duration + 0.05 for a, b in spans_srt) and all(x[1] <= y[0] for x, y in zip(spans_srt, spans_srt[1:]))
+    thumb = out.with_suffix(".jpg")
+    from PIL import Image
+    checks["thumbnail_1080x1920"] = thumb.exists() and Image.open(thumb).size == (1080, 1920)
+    shutil.copy(thumb, OUT / f"{t['name']}_thumbnail.jpg") if thumb.exists() else None
     if t.get("music"):
         track = media.load_audio(job.dir / "music.wav", SR, 1)[:, 0]
         m = min(len(track), len(mixed))

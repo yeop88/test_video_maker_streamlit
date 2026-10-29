@@ -216,6 +216,20 @@ def test_full_flow(page, lake: Path, out: Path):
     info = media.probe(path)
     check("다운로드한 쇼츠 1080x1920", (info.width, info.height) == (1080, 1920) and info.has_audio,
           f"{info.width}x{info.height} {info.duration:.1f}초")
+    card = page.locator('[class*="st-key-result_"]').first
+    with page.expect_download() as dl:
+        card.get_by_role("button", name="⬇️ 자막 SRT").click()
+    srt = out / dl.value.suggested_filename
+    dl.value.save_as(srt)
+    check("SRT 자막 다운로드", srt.suffix == ".srt" and "-->" in srt.read_text(encoding="utf-8"), srt.name)
+    card.get_by_role("tab", name="썸네일").click()
+    page.wait_for_timeout(800)
+    check("썸네일 보기", card.locator("img").count() >= 1)
+    with page.expect_download() as dl:
+        card.get_by_role("button", name="⬇️ 썸네일 JPG").click()
+    jpg = out / dl.value.suggested_filename
+    dl.value.save_as(jpg)
+    check("썸네일 다운로드", jpg.suffix == ".jpg" and jpg.stat().st_size > 20_000, f"{jpg.stat().st_size // 1024}KB")
     page.screenshot(path=str(out / "result.png"), full_page=True)
     test_results_history(page)
 
