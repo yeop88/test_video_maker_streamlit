@@ -157,6 +157,8 @@ with st.sidebar:
     ) if models else None
     st.selectbox("나레이션 말투", presets.CHOICES["style"], key="style")
     setting_slider("쇼츠 길이 목표 (초)", "target_sec")
+    setting_slider("쇼츠 개수 (한 영상에서)", "short_count",
+                   help="2편 이상이면 긴 영상을 서로 다른 주제로 나눠 편마다 쇼츠를 만듭니다.")
 
     st.subheader("나레이션 목소리")
     st.radio("음성 엔진", presets.CHOICES["engine"], format_func=ENGINE_LABELS.get, key="engine")
@@ -381,16 +383,18 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job) -> list[dict]
         if (start, end, narration) != (clip["start"], clip["end"], clip["narration"]):
             clip.update(start=start, end=end, narration=narration)  # 고친 값을 바로 저장 (새로고침해도 남음)
             project.save(p)
-    st.button("➕ 구간 추가", on_click=add_card, args=(p, short, job.duration),
+    st.button("➕ 구간 추가", key=f"add_{short['id']}", on_click=add_card, args=(p, short, job.duration),
               help="마지막 구간 뒤 5초를 새 카드로 추가합니다. 시간을 고쳐 원하는 장면을 고르세요.")
     return [c for c in short["clips"] if c["end"] > c["start"]]
 
 
-def make_plan(p: project.Project) -> None:
-    title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label])
-    if not clips:
+def make_plan(p: project.Project, on_progress=None) -> None:
+    """사이드바 「쇼츠 개수」만큼 주제를 나눠 편마다 구간·나레이션을 구성한다 (1편이면 영상 전체에서)."""
+    shorts = pipeline.plan_series(p.job, llm_model, ss.short_count, target_sec, llm.STYLES[style_label],
+                                  on_progress=on_progress or (lambda done, n: None))
+    if not shorts or not any(s["clips"] for s in shorts):
         raise RuntimeError("쓸 만한 구간을 고르지 못했습니다. 다시 구성하거나 쇼츠 길이를 바꿔 보세요.")
-    p.shorts = [{"id": project.new_id(), "title": title, "clips": clips}]
+    p.shorts = shorts
     project.save(p)
     set_project(p)
 
@@ -411,8 +415,13 @@ if run_analyze:
             )
             proj.job = job
             project.save(proj)  # 구성에서 실패해도 분석 결과는 남긴다
-            st.write("🧠 하이라이트 구간 고르기 + 나레이션 대본 쓰기")
-            make_plan(proj)
+            if ss.short_count > 1:
+                st.write(f"🧠 서로 다른 주제로 쇼츠 {ss.short_count}편 나누기 + 편마다 구간·나레이션")
+                plan_bar = st.progress(0.0)
+                make_plan(proj, on_progress=lambda done, n: plan_bar.progress(done / n, text=f"{done} / {n}편 구성"))
+            else:
+                st.write("🧠 하이라이트 구간 고르기 + 나레이션 대본 쓰기")
+                make_plan(proj)
             status.update(label="1단계 완료", state="complete", expanded=False)
         except Exception as e:
             status.update(label="1단계 실패", state="error")
@@ -427,54 +436,7 @@ with st.expander(f"🔎 AI가 이해한 내용 (장면 {len(job.frames)}개, 대
     st.caption(f"대사 언어: {job.language or '대사 없음'}")
     st.text(pipeline.timeline(job) or "(내용 없음)")
 
-# ───────────────────────── 2단계: 구성 수정 ─────────────────────────
-st.divider()
-st.subheader("2단계 · 쇼츠 구성과 나레이션 확인")
-st.caption(
-    "AI가 고른 원본 구간과 구간별 나레이션입니다. 카드에서 구간을 재생해 보고 시간과 나레이션을 고치거나, "
-    "순서를 바꾸고 구간을 추가·삭제할 수 있습니다. 나레이션이 구간보다 길면 쇼츠를 만들 때 구간을 자동으로 늘립니다. "
-    "고친 내용은 바로 저장됩니다."
-)
-if not proj.shorts:
-    if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
-        with st.spinner("구성하는 중..."):
-            make_plan(proj)
-        st.rerun()
-    st.stop()
-short = proj.shorts[0]
-
-col_title, col_replan = st.columns([3, 1])
-with col_title:
-    title = st.text_input("제목 (화면 위쪽)", value=short["title"], disabled=not show_title, key=f"title_{short['id']}")
-with col_replan:
-    st.write("")
-    if st.button("🔄 구성 다시 만들기", help="같은 분석 결과로 구간과 나레이션을 다시 만듭니다. 사이드바의 말투·길이가 반영됩니다."):
-        with st.spinner("다시 구성하는 중..."):
-            make_plan(proj)
-        st.rerun()
-
-raw_clips = clip_cards(proj, short, job)
-clips = pipeline.normalize_clips(job, raw_clips)  # 쇼츠를 만들 때 쓰는 구간 (범위 맞춤, 대사 경계, 겹침 합치기)
-if title != short["title"]:
-    short["title"] = title
-    project.save(proj)
-
-col_info, col_renarrate = st.columns([3, 1])
-with col_info:
-    st.caption(f"구간 {len(clips)}개 · 원본 구간 합계 {sum(c['end'] - c['start'] for c in clips):.1f}초")
-    if len(clips) < len([c for c in raw_clips if c["end"] > c["start"]]):
-        st.caption("⚠️ 겹치는 구간은 쇼츠를 만들 때 하나로 합쳐집니다.")
-with col_renarrate:
-    if st.button(
-        "✍️ 나레이션만 다시 쓰기", disabled=not clips or llm_model is None,
-        help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
-    ):
-        with st.spinner("나레이션을 쓰는 중..."):
-            short["clips"] = pipeline.narrate(job, raw_clips, llm_model, llm.STYLES[style_label])
-            project.save(proj)
-            set_project(proj)
-        st.rerun()
-
+# ───────────────────────── 2단계: 구성 수정 / 3단계: 쇼츠 만들기 ─────────────────────────
 def settings_summary() -> str:
     """결과 기록에 남길 설정 한 줄 요약 (나란히 비교할 때 무엇이 달랐는지 보이게)."""
     if ss.engine == "edge":
@@ -488,35 +450,134 @@ def settings_summary() -> str:
     return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f} · {bgm}"
 
 
-# ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
-if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips):
-    with st.status("쇼츠를 만드는 중...", expanded=True) as status:
-        try:
-            if ss.engine == "edge":
-                engine = tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
-            else:
-                reference = pipeline.save_voice_sample(voice_sample.name, voice_sample.getvalue()) if voice_sample else None
-                engine = tts.ChatterboxEngine(get_chatterbox(), reference, ss.exaggeration)
-            st.write("🎙️ 나레이션 음성 만들기")
-            bar = st.progress(0.0)
-            video, report = pipeline.make_short(
-                job, title if show_title else "", clips, engine, original_gain, duck_gain,
-                ss.layout, font_size, margin_percent, color,
-                on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 문장"),
-                out_dir=proj.dir / "results",
-                subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
-                music_path=music.track_path(ss.bgm_track), music_gain=ss.bgm_gain, music_duck=ss.bgm_duck,
-            )
-            proj.results.insert(0, {
-                "id": project.new_id(), "short_id": short["id"], "title": title,
-                "video": str(video), "report": report, "created": project.now(),
-                "duration": round(media.probe(video).duration, 1), "summary": settings_summary(),
-            })
-            project.save(proj)
-            status.update(label="완성!", state="complete", expanded=False)
-        except Exception as e:
-            status.update(label="만들기 실패", state="error")
-            st.exception(e)
+def make_engine():
+    if ss.engine == "edge":
+        return tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
+    reference = pipeline.save_voice_sample(voice_sample.name, voice_sample.getvalue()) if voice_sample else None
+    return tts.ChatterboxEngine(get_chatterbox(), reference, ss.exaggeration)
+
+
+def build_short(p: project.Project, short: dict, engine) -> None:
+    """쇼츠 한 편을 만들어 결과 기록에 넣는다."""
+    clips = pipeline.normalize_clips(p.job, [c for c in short["clips"] if c["end"] > c["start"]])
+    if not clips:
+        raise RuntimeError(f"'{short['title']}'에 쓸 구간이 없습니다.")
+    bar = st.progress(0.0, text=f"🎙️ {short['title']} 나레이션 음성")
+    video, report = pipeline.make_short(
+        p.job, short["title"] if show_title else "", clips, engine, original_gain, duck_gain,
+        ss.layout, font_size, margin_percent, color,
+        on_progress=lambda done, n: bar.progress(done / n, text=f"🎙️ {short['title']} · {done} / {n} 문장"),
+        out_dir=p.dir / "results",
+        subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
+        music_path=music.track_path(ss.bgm_track), music_gain=ss.bgm_gain, music_duck=ss.bgm_duck,
+    )
+    p.results.insert(0, {
+        "id": project.new_id(), "short_id": short["id"], "title": short["title"],
+        "video": str(video), "report": report, "created": project.now(),
+        "duration": round(media.probe(video).duration, 1), "summary": settings_summary(),
+    })
+    project.save(p)
+
+
+def replan_short(p: project.Project, short: dict) -> None:
+    """이 쇼츠 한 편만 다시 구성 (여러 편이면 그 편의 원본 범위·주제 안에서)."""
+    span = tuple(short.get("range") or (0.0, p.job.duration))
+    title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label],
+                                 span=span if len(p.shorts) > 1 else None, focus=short.get("focus", ""))
+    short.update(title=title, clips=clips)
+    project.save(p)
+    set_project(p)
+
+
+def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
+    sid = short["id"]
+    col_title, col_replan = st.columns([3, 1])
+    with col_title:
+        title = st.text_input("제목 (화면 위쪽)", value=short["title"], disabled=not show_title, key=f"title_{sid}")
+        if title != short["title"]:
+            short["title"] = title
+            project.save(p)
+        if len(p.shorts) > 1 and short.get("range"):
+            a, b = short["range"]
+            st.caption(f"원본 {a:.0f}~{b:.0f}초 부분 · {short.get('focus', '')}")
+    with col_replan:
+        st.write("")
+        replan_label = "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기"
+        if st.button(replan_label, key=f"replan_{sid}", disabled=llm_model is None,
+                     help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 사이드바의 말투·길이가 반영됩니다."):
+            with st.spinner("다시 구성하는 중..."):
+                replan_short(p, short)
+            st.rerun()
+
+    raw_clips = clip_cards(p, short, job)
+    clips = pipeline.normalize_clips(job, raw_clips)  # 쇼츠를 만들 때 쓰는 구간 (범위 맞춤, 대사 경계, 겹침 합치기)
+
+    col_info, col_renarrate = st.columns([3, 1])
+    with col_info:
+        st.caption(f"구간 {len(clips)}개 · 원본 구간 합계 {sum(c['end'] - c['start'] for c in clips):.1f}초")
+        if len(clips) < len(raw_clips):
+            st.caption("⚠️ 겹치는 구간은 쇼츠를 만들 때 하나로 합쳐집니다.")
+    with col_renarrate:
+        if st.button(
+            "✍️ 나레이션만 다시 쓰기", key=f"renarr_{sid}", disabled=not clips or llm_model is None,
+            help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
+        ):
+            with st.spinner("나레이션을 쓰는 중..."):
+                short["clips"] = pipeline.narrate(job, raw_clips, llm_model, llm.STYLES[style_label])
+                project.save(p)
+                set_project(p)
+            st.rerun()
+
+    if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips, key=f"make_{sid}"):
+        with st.status("쇼츠를 만드는 중...", expanded=True) as status:
+            try:
+                build_short(p, short, make_engine())
+                status.update(label="완성!", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="만들기 실패", state="error")
+                st.exception(e)
+
+
+st.divider()
+st.subheader("2단계 · 쇼츠 구성과 나레이션 확인")
+st.caption(
+    "AI가 고른 원본 구간과 구간별 나레이션입니다. 카드에서 구간을 재생해 보고 시간과 나레이션을 고치거나, "
+    "순서를 바꾸고 구간을 추가·삭제할 수 있습니다. 나레이션이 구간보다 길면 쇼츠를 만들 때 구간을 자동으로 늘립니다. "
+    "고친 내용은 바로 저장됩니다."
+)
+if not proj.shorts:
+    if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
+        with st.spinner("구성하는 중..."):
+            make_plan(proj)
+        st.rerun()
+    st.stop()
+
+if len(proj.shorts) > 1 or ss.short_count > 1:
+    col_count, col_all_plan, col_all_make = st.columns([2, 1, 1])
+    col_count.markdown(f"**쇼츠 {len(proj.shorts)}편** · 한 영상에서 서로 다른 주제로 나눴습니다.")
+    if col_all_plan.button(f"🔄 {ss.short_count}편으로 다시 나누기", disabled=llm_model is None,
+                           help="사이드바의 「쇼츠 개수」만큼 주제를 다시 나누고 편마다 구성합니다."):
+        with st.spinner(f"쇼츠 {ss.short_count}편으로 나누는 중..."):
+            make_plan(proj)
+        st.rerun()
+    if col_all_make.button("🎬 모든 쇼츠 만들기", type="primary", disabled=len(proj.shorts) < 2):
+        with st.status(f"쇼츠 {len(proj.shorts)}편을 만드는 중...", expanded=True) as status:
+            try:
+                engine = make_engine()
+                for item in proj.shorts:
+                    build_short(proj, item, engine)
+                status.update(label=f"{len(proj.shorts)}편 완성!", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="만들기 실패", state="error")
+                st.exception(e)
+
+if len(proj.shorts) == 1:
+    short_editor(proj, proj.shorts[0], job)
+else:
+    tabs = st.tabs([f"{i + 1}. {s['title'][:14] or '(제목 없음)'}" for i, s in enumerate(proj.shorts)])
+    for tab, item in zip(tabs, proj.shorts):
+        with tab:
+            short_editor(proj, item, job)
 
 # ───────────────────────── 결과 기록 ─────────────────────────
 def delete_result(p: project.Project, result_id: str) -> None:

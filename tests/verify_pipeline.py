@@ -176,6 +176,7 @@ def ass_cues(path):
 whisper = asr.load_whisper()
 chatterbox = None
 results = []
+sources = {}  # 테스트 이름 → 만든 원본 영상 (T4에서 이어 붙임)
 model = config.DEFAULT_OLLAMA_MODEL
 
 for t in TESTS:
@@ -369,7 +370,64 @@ for t in TESTS:
     r["subtitles"] = [f"{a:.1f}-{b:.1f} {txt}" for a, b, txt in cues]
     r["output_path"] = str(out)
     results.append(r)
+    sources[t["name"]] = src
     log(f"{t['name']} passed={r['passed']} {checks}")
+
+
+def test_series():
+    """T4: 한 영상에서 쇼츠 2편. T1(호수 브이로그)과 T2(수면 팁) 영상을 이어 붙여 주제가 둘인 75초 영상을 만든다."""
+    name = "T4_two_topics_series"
+    log(f"===== {name} =====")
+    folder = OUT / name
+    folder.mkdir(parents=True, exist_ok=True)
+    src = folder / f"{name}.mp4"
+    a, b = sources["T1_korean_lake_vlog"], sources["T2_english_sleep_tips_slides"]
+    media.run_ffmpeg(["-i", str(a), "-i", str(b), "-filter_complex",
+                      "[0:v]fps=30,format=yuv420p[v0];[1:v]fps=30,format=yuv420p[v1];"
+                      "[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][au]",
+                      "-map", "[v]", "-map", "[au]", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(src)])
+    split_at = media.probe(a).duration
+    data = src.read_bytes()
+    source = pipeline.save_upload(f"verify_{name}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
+    t1 = time.time()
+    job = pipeline.prepare_job(source, 0.0, media.probe(src).duration)
+    pipeline.transcribe(job, whisper)
+    pipeline.capture_frames(job)
+    pipeline.describe_frames(job, model)
+    shorts = pipeline.plan_series(job, model, 2, 25, llm.STYLES["정보 전달 (차분한 설명)"])
+    r = {"test": name, "source": f"{job.duration:.1f}s (주제 경계 {split_at:.1f}s)", "timings": {"plan": round(time.time() - t1, 1)}}
+    r["shorts"] = [{"title": s["title"], "range": [round(x, 1) for x in s["range"]], "focus": s["focus"],
+                    "clips": s["clips"]} for s in shorts]
+    lake_words = ["호수", "산", "숲", "노을", "산책", "풍경", "물"]
+    sleep_words = ["잠", "수면", "취침", "스마트폰", "온도", "침실"]
+    texts = [" ".join(c["narration"] for c in s["clips"]) + " " + s["title"] for s in shorts]
+    kinds = [("lake" if sum(w in x for w in lake_words) > sum(w in x for w in sleep_words) else "sleep") for x in texts]
+    r["kinds"] = kinds
+    checks = {
+        "two_shorts": len(shorts) == 2,
+        "ranges_not_overlapping": len(shorts) == 2 and shorts[0]["range"][1] <= shorts[1]["range"][0] + 0.5,
+        "clips_inside_own_range": all(s["range"][0] - 1 <= c["start"] and c["end"] <= s["range"][1] + 3.5
+                                      for s in shorts for c in s["clips"]),
+        "topics_separated(lake, sleep)": sorted(kinds) == ["lake", "sleep"],
+        "titles_distinct": len({s["title"] for s in shorts}) == len(shorts),
+    }
+    outs = []
+    engine = tts.EdgeTTSEngine("ko-KR-InJoonNeural", 10)
+    for s in shorts:
+        out, _ = pipeline.make_short(job, s["title"], pipeline.normalize_clips(job, s["clips"]), engine, 0.8, 0.2,
+                                     "blur", 72, 20, "#FFFFFF")
+        outs.append(out)
+    checks["both_rendered_1080x1920"] = len(outs) == 2 and all(
+        (media.probe(o).width, media.probe(o).height) == (1080, 1920) for o in outs)
+    r["outputs"] = [f"{media.probe(o).duration:.1f}s" for o in outs]
+    r["checks"] = {k: bool(v) for k, v in checks.items()}
+    r["passed"] = all(r["checks"].values())
+    results.append(r)
+    log(f"{name} passed={r['passed']} {r['checks']}")
+
+
+if {"T1_korean_lake_vlog", "T2_english_sleep_tips_slides"} <= set(sources):
+    test_series()
 
 (OUT / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 log("ALL DONE " + " ".join(f"{r['test']}={'PASS' if r['passed'] else 'FAIL'}" for r in results))

@@ -252,6 +252,31 @@ def test_results_history(page):
     check("결과 지우기", results.count() == 1 and "인준" in results.first.inner_text())
 
 
+def test_series_ui(page, combo: Path):
+    """한 영상에서 쇼츠 2편: 쇼츠 개수 2 → 분석 → 탭 2개 → 모든 쇼츠 만들기 → 결과 2개."""
+    open_app(page)
+    slider = page.locator('[data-testid="stSidebar"]').get_by_role("slider", name="쇼츠 개수 (한 영상에서)")
+    slider.focus()
+    slider.press("ArrowRight")
+    page.wait_for_timeout(1500)
+    drag(page, 700, 140, combo)
+    page.get_by_role("button", name="1단계 · 영상 분석 + 쇼츠 구성").click()
+    t = time.time()
+    page.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").wait_for(timeout=600000)
+    page.wait_for_timeout(2000)
+    tabs = page.get_by_role("tab")
+    check("쇼츠 2편 → 탭 2개", tabs.count() >= 2 and "쇼츠 2편" in page.inner_text('[data-testid="stMain"]'),
+          f"{[x.inner_text() for x in tabs.all()]}, {time.time() - t:.0f}초")
+    tabs.nth(1).click()
+    page.wait_for_timeout(1000)
+    check("두 번째 탭에도 구간 카드", page.locator('[class*="st-key-cardbox_"]').count() >= 2)
+    page.get_by_role("button", name="🎬 모든 쇼츠 만들기").click()
+    page.wait_for_function("document.querySelectorAll('[class*=\"st-key-result_\"]').length >= 2", timeout=600000)
+    page.wait_for_timeout(1500)
+    titles = [r.inner_text().splitlines()[0] for r in page.locator('[class*="st-key-result_"]').all()]
+    check("모든 쇼츠 만들기 → 결과 2개 (편마다 제목)", len(titles) == 2 and len(set(titles)) == 2, titles)
+
+
 def test_restore(page):
     """새로고침해도 작업을 이어서 할 수 있는가: 제목을 고치고 새로고침 → 최근 작업에서 열기."""
     box = page.get_by_label("제목 (화면 위쪽)")
@@ -278,6 +303,11 @@ def main():
     lake = make_video(work, "lake", WALL / "ThemeC/img28.jpg", 14,
                       "안녕하세요. 오늘은 산속 호숫가로 아침 산책을 나왔어요. 물이 거울처럼 잔잔하고 공기가 정말 맑네요.")
     art = make_video(work, "art", WALL / "ThemeB/img24.jpg", 6)
+    combo = work / "combo.mp4"  # 주제가 둘인 영상: 호수 풍경(말소리 있음) + 추상 조형물(음악 없음)
+    art_long = make_video(work, "art_long", WALL / "ThemeB/img25.jpg", 9)
+    media.run_ffmpeg(["-i", str(lake), "-i", str(art_long), "-filter_complex",
+                      "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]", "-map", "[v]", "-map", "[a]",
+                      "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(combo)])
     song = work / "test_song.mp3"
     media.run_ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-ac", "2", str(song)])
 
@@ -303,6 +333,7 @@ def main():
             if not QUICK:
                 test_full_flow(page, lake, work)
                 test_restore(page)
+                test_series_ui(page, combo)
             browser.close()
     finally:
         died = server.poll() is not None

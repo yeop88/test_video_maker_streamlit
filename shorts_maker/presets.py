@@ -17,6 +17,7 @@ from .tts import EDGE_VOICES
 # 숫자 설정의 (최솟값, 최댓값, 간격). app.py의 슬라이더도 이 값을 쓴다.
 RANGES = {
     "target_sec": (15, 90, 5),
+    "short_count": (1, 5, 1),
     "rate": (-20, 40, 5),
     "exaggeration": (0.25, 1.5, 0.05),
     "original_gain": (0.0, 1.0, 0.05),
@@ -38,6 +39,7 @@ DEFAULTS = {
     "llm_model": config.DEFAULT_OLLAMA_MODEL,
     "style": "정보 전달 (차분한 설명)",
     "target_sec": 40,
+    "short_count": 1,
     "engine": "edge",
     "edge_voice": "ko-KR-SunHiNeural",
     "rate": 10,

@@ -127,15 +127,20 @@ def timeline(job: Job) -> str:
 # ───────────────────────── 2단계: 쇼츠 구성 ─────────────────────────
 
 
-def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list[dict]]:
+def plan(job: Job, model: str, target_sec: float, style: str,
+         span: tuple[float, float] | None = None, focus: str = "") -> tuple[str, list[dict]]:
     """(제목, 구간 목록)을 돌려준다. 구간은 start, end, narration.
+    span을 주면 원본의 그 범위 안에서만 고른다 (한 영상을 여러 편으로 나눈 경우). focus는 그 편의 주제.
 
     구간 고르기와 나레이션 쓰기를 나눈다. 한 번에 시키면 LLM이 다른 구간의 내용을 엉뚱한 화면에
     붙이는 일이 있어서, 나레이션은 구간마다 그 시간의 장면·대사만 보여 주고 쓰게 한다.
     """
-    selection = llm.select_clips(model, timeline(job), job.duration, target_sec)
+    lo, hi = span or (0.0, job.duration)
+    text = llm.timeline_text(job.frames, job.segments, lo, hi)
+    selection = llm.select_clips(model, text, job.duration, target_sec, span=span, focus=focus)
     chosen = sorted(selection.clips, key=lambda c: c.start)
-    clips = normalize_clips(job, [{"start": c.start, "end": c.end, "narration": ""} for c in chosen])
+    clips = [{"start": max(lo, c.start), "end": min(hi, c.end), "narration": ""} for c in chosen]
+    clips = normalize_clips(job, clips)
     # 다시 요청해도 길이가 크게 틀리면 코드로 맞춘다
     total = sum(c["end"] - c["start"] for c in clips)
     if total > 1.3 * target_sec:  # 구간 끝을 같은 비율로 줄인다
@@ -146,28 +151,52 @@ def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list
     elif total < 0.75 * target_sec:  # 구간마다 앞뒤 빈 곳으로 똑같이 늘린다
         share = (target_sec - total) / len(clips)
         for i, c in enumerate(clips):
-            after = (clips[i + 1]["start"] if i + 1 < len(clips) else job.duration) - c["end"]
-            before = c["start"] - (clips[i - 1]["end"] if i > 0 else 0.0)
+            after = (clips[i + 1]["start"] if i + 1 < len(clips) else hi) - c["end"]
+            before = c["start"] - (clips[i - 1]["end"] if i > 0 else lo)
             grow_end = min(max(0.0, after), share)
             c["end"] += grow_end
             c["start"] -= min(max(0.0, before), share - grow_end)
         clips = normalize_clips(job, clips)
-    clips = add_missing_items(job, clips)
+    clips = add_missing_items(job, clips, (lo, hi))
     return selection.title, narrate(job, split_long_clips(job, clips), model, style)
 
 
-def add_missing_items(job: Job, clips: list[dict]) -> list[dict]:
+def plan_series(job: Job, model: str, count: int, target_sec: float, style: str,
+                on_progress: Progress = _no_progress) -> list[dict]:
+    """한 영상에서 서로 다른 주제의 쇼츠 count편을 구성한다. [{id, title, range, focus, clips}]"""
+    import uuid
+
+    if count <= 1:
+        title, clips = plan(job, model, target_sec, style)
+        return [{"id": uuid.uuid4().hex[:8], "title": title, "range": [0.0, job.duration], "focus": "", "clips": clips}]
+    topics = llm.suggest_topics(model, timeline(job), job.duration, count, target_sec)
+    shorts = []
+    for i, topic in enumerate(topics):
+        title, clips = plan(job, model, target_sec, style, span=(topic.start, topic.end), focus=topic.angle)
+        if clips:
+            shorts.append({"id": uuid.uuid4().hex[:8], "title": title or topic.title,
+                           "range": [topic.start, topic.end], "focus": topic.angle, "clips": clips})
+        on_progress(i + 1, len(topics))
+    return shorts
+
+
+def add_missing_items(job: Job, clips: list[dict], span: tuple[float, float] | None = None) -> list[dict]:
     """번호 붙은 목록 영상(화면 "TIP 2", 대사 "Second")에서 고른 구간에 빠진 번호가 있으면 그 부분을 구간으로 넣는다.
     LLM이 핵심 내용을 다 담았다고 답하고도 둘째 팁 구간을 빼먹은 일이 있었다."""
+    lo, hi = span or (0.0, job.duration)
     where: dict[int, list[float]] = {}
     for f in job.frames:
+        if not lo <= f["t"] <= hi:
+            continue
         for n in llm.excerpt_ordinals(f["caption"]):
             where.setdefault(n, []).append(f["t"])
     for s in job.segments:
+        if s["end"] < lo or s["start"] > hi:
+            continue
         for n in llm.excerpt_ordinals(s["text"]):
             where.setdefault(n, []).extend([s["start"], s["end"]])
     items = sorted(where)
-    if len(items) < 2 or items != list(range(1, len(items) + 1)):  # 1부터 이어지는 번호가 아니면 목록이 아님
+    if len(items) < 2 or items != list(range(items[0], items[0] + len(items))):  # 이어지는 번호가 아니면 목록이 아님
         return clips
     covered = set()
     for c in clips:
@@ -180,7 +209,7 @@ def add_missing_items(job: Job, clips: list[dict]) -> list[dict]:
         b = min(b, a + 12.0)
         if any(c["start"] < b and a < c["end"] for c in clips + added):  # 겹치면 넣지 않음
             continue
-        added.append({"start": max(0.0, a), "end": min(job.duration, b), "narration": ""})
+        added.append({"start": max(lo, a), "end": min(hi, b), "narration": ""})
     if not added:
         return clips
     return normalize_clips(job, sorted(clips + added, key=lambda c: c["start"]))
@@ -201,7 +230,8 @@ def split_long_clips(job: Job, clips: list[dict]) -> list[dict]:
         spans = sorted(_sentence_spans(job))
         gaps = [(x[1] + y[0]) / 2 for x, y in zip(spans, spans[1:]) if a + 3 < (x[1] + y[0]) / 2 < b - 3]
         cut = min(gaps, key=lambda g: abs(g - (a + b) / 2)) if gaps else (a + b) / 2
-        queue[:0] = [{**clip, "end": round(cut, 2)}, {**clip, "start": round(cut, 2), "uid": clip.get("uid", "") + "b"}]
+        second = {k: v for k, v in clip.items() if k != "uid"}  # 새 카드 ID는 화면에서 붙인다
+        queue[:0] = [{**clip, "end": round(cut, 2)}, {**second, "start": round(cut, 2)}]
     return out
 
 

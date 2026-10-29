@@ -43,15 +43,19 @@ NARRATE_PROMPT = """당신은 쇼츠 나레이션 작가입니다. 쇼츠는 아
 규칙:
 - 각 구간의 나레이션은 반드시 그 구간의 excerpt(그 시간의 화면 설명과 대사)에 나온 내용만 다루세요.
   다른 구간의 내용을 미리 말하거나 뒤늦게 말하면 화면과 맞지 않습니다.
-- excerpt에 팁·단계·항목이 여러 개 나오면(화면 글자 "TIP 1", "TIP 2"나 대사) 하나도 빠뜨리지 말고 모두 짧게 담으세요.
-- 번호 붙은 항목(화면 "TIP 2", 대사 "Second")이 나오는 구간은 "둘째,"처럼 그 번호의 순서 표현으로 시작해 그 항목 내용을 쓰세요.
-- max_chars(공백 포함 글자 수)를 넘지 마세요.
+{list_rules}- max_chars(공백 포함 글자 수)를 넘지 마세요.
 - 첫 구간은 시청자를 붙잡는 한 문장으로 시작하고, 마지막 구간은 짧게 마무리하세요.
 - 구간이 이어지는 하나의 이야기처럼 자연스럽게 연결하세요.
 - 대사를 그대로 번역해 반복하지 말고, 무슨 일이 일어나는지 설명하거나 해설하세요.
 - excerpt에 없는 사실(이름, 숫자, 장소)은 지어내지 마세요. 숫자는 excerpt에 나온 값 그대로 아라비아 숫자로 쓰세요.
 - 한글로만 쓰세요. 한자, 일본어, 영어 문장은 쓰지 마세요. 짧은 영어 고유명사는 한글로 적으세요.
 - 말투: {style}"""
+
+
+# 번호 붙은 목록 영상일 때만 넣는 규칙. 늘 넣으면 목록이 아닌 영상에도 "둘째, 셋째"를 붙였다.
+LIST_RULES = """- 이 영상은 번호 붙은 목록(팁·단계)입니다. excerpt에 항목이 여러 개 나오면 하나도 빠뜨리지 말고 모두 짧게 담으세요.
+- 번호 붙은 항목(화면 "TIP 2", 대사 "Second")이 나오는 구간은 "둘째,"처럼 그 번호의 순서 표현으로 시작해 그 항목 내용을 쓰세요.
+"""
 
 
 class FrameNote(BaseModel):
@@ -137,17 +141,82 @@ def _ask_until_ok(model, messages, schema, check, attempts: int):
     return best
 
 
-def select_clips(model: str, timeline: str, duration: float, target_sec: float, attempts: int = 3) -> Selection:
+TOPIC_PROMPT = """당신은 긴 영상을 여러 편의 쇼츠로 나누는 편집자입니다.
+타임라인(장면 설명과 대사)을 보고, 서로 다른 주제의 쇼츠 {count}편을 만들 수 있게 원본을 {count}부분으로 나누세요.
+
+규칙:
+- topics: 정확히 {count}개. 시간 순서대로, 서로 겹치지 않게.
+- 각 부분(start~end)은 그 쇼츠에 쓸 장면이 모두 들어 있는 원본 범위입니다. 최소 {min_len}초.
+- 각 부분은 혼자 봐도 이해되는 하나의 주제여야 합니다. 비슷한 주제를 두 번 고르지 마세요.
+- title: 그 쇼츠의 한글 제목 (15자 이내), angle: 그 쇼츠가 다룰 내용 한 줄."""
+
+
+class Topic(BaseModel):
+    title: str
+    start: float
+    end: float
+    angle: str
+
+
+class TopicSet(BaseModel):
+    topics: list[Topic]
+
+
+def suggest_topics(model: str, timeline: str, duration: float, count: int, target_sec: float,
+                   attempts: int = 3) -> list[Topic]:
+    """긴 영상을 서로 다른 주제의 쇼츠 count편으로 나눌 원본 범위들."""
+    min_len = int(min(target_sec, duration / count) * 0.6)
+    messages = [
+        {"role": "system", "content": TOPIC_PROMPT.format(count=count, min_len=min_len)},
+        {"role": "user", "content": f"원본 영상 길이: {duration:.1f}초\n\n타임라인:\n{timeline}"},
+    ]
+
+    def check(result: TopicSet) -> list[str]:
+        topics = sorted(result.topics, key=lambda t: t.start)
+        problems = []
+        if len(topics) != count:
+            problems.append(f"topics가 {len(topics)}개입니다. 정확히 {count}개로 나누세요.")
+        for a, b in zip(topics, topics[1:]):
+            if b.start < a.end - 0.5:
+                problems.append(f"'{a.title}'({a.start:.0f}~{a.end:.0f}초)와 '{b.title}'({b.start:.0f}~{b.end:.0f}초)가 겹칩니다.")
+        for t in topics:
+            if t.end - t.start < min_len:
+                problems.append(f"'{t.title}'({t.start:.0f}~{t.end:.0f}초)가 {min_len}초보다 짧습니다.")
+            if t.start < -0.5 or t.end > duration + 0.5:
+                problems.append(f"'{t.title}'이(가) 원본 길이 {duration:.0f}초를 벗어납니다.")
+        return problems
+
+    result = _ask_until_ok(model, messages, TopicSet, check, attempts)
+    if result is None or not result.topics:
+        raise RuntimeError("쇼츠 주제를 나누지 못했습니다. 쇼츠 개수를 줄이거나 다시 시도하세요.")
+    topics = sorted(result.topics, key=lambda t: t.start)[:count]
+    for t in topics:
+        t.start, t.end, t.title = max(0.0, t.start), min(duration, t.end), tidy(t.title)
+    return [t for t in topics if t.end - t.start >= 3]
+
+
+def select_clips(model: str, timeline: str, duration: float, target_sec: float, attempts: int = 3,
+                 span: tuple[float, float] | None = None, focus: str = "") -> Selection:
+    """span을 주면 원본의 그 범위 안에서만 고른다 (여러 편으로 나눈 쇼츠 한 편). focus는 그 편의 주제."""
     count = max(2, min(6, round(target_sec / 8)))
+    lo, hi = span or (0.0, duration)
+    where = f"원본 영상 길이: {duration:.1f}초"
+    if span:
+        where += f"\n이 쇼츠는 원본 {lo:.1f}~{hi:.1f}초 부분에서만 구간을 고르세요."
+    if focus:
+        where += f"\n이 쇼츠의 주제: {focus}"
     messages = [
         {"role": "system", "content": SELECT_PROMPT.format(target=int(target_sec), count=count)},
-        {"role": "user", "content": f"원본 영상 길이: {duration:.1f}초\n\n타임라인:\n{timeline}"},
+        {"role": "user", "content": f"{where}\n\n타임라인:\n{timeline}"},
     ]
 
     def check(sel: Selection) -> list[str]:
         # LLM은 길이 합계를 잘 맞추지 못하므로, 무엇이 틀렸는지 숫자로 알려 준다
         if not sel.clips:
             return ["clips가 비어 있습니다."]
+        outside = [f"{c.start:.1f}~{c.end:.1f}초" for c in sel.clips if c.start < lo - 1 or c.end > hi + 1]
+        if outside:
+            return [f"구간 {', '.join(outside)}이(가) 이 쇼츠의 범위({lo:.1f}~{hi:.1f}초) 밖입니다."]
         total = sum(max(0.0, min(c.end, duration) - max(c.start, 0.0)) for c in sel.clips)
         lengths = ", ".join(f"{c.end - c.start:.1f}" for c in sel.clips)
         problems = []
@@ -178,7 +247,11 @@ def select_clips(model: str, timeline: str, duration: float, target_sec: float, 
 
 
 def write_narrations(model: str, items: list[dict], style: str, attempts: int = 3) -> list[str]:
-    """items: [{start, end, excerpt}] → 구간별 나레이션. excerpt는 그 구간의 장면 설명과 대사."""
+    """items: [{start, end, excerpt}] → 구간별 나레이션. excerpt는 그 구간의 장면 설명과 대사.
+
+    모든 구간을 한 번에 쓰게 한 뒤 검사하고, 그래도 문제가 남은 구간은 그 구간만 따로 다시 쓰게 한다
+    (한 번에 쓰면 LLM이 다른 구간의 내용을 옮겨 쓰는 일이 있어서, 한 구간씩 고치면 더 잘 맞는다).
+    """
     payload = [
         {
             "id": i,
@@ -188,52 +261,78 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
         }
         for i, it in enumerate(items)
     ]
-    messages = [
-        {"role": "system", "content": NARRATE_PROMPT.format(style=style)},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=1)},
-    ]
+    is_list = any(excerpt_ordinals(item["excerpt"]) for item in payload)
+    system = NARRATE_PROMPT.format(style=style, list_rules=LIST_RULES if is_list else "")
+
+    def item_problems(item: dict, text: str) -> list[str]:
+        i = item["id"]
+        if not text:
+            return [f"id {i}의 나레이션이 없습니다."]
+        problems = []
+        if FOREIGN_SCRIPT.search(text):
+            problems.append(f"id {i}에 한자나 일본어 문자가 있습니다. 한글로만 쓰세요.")
+        if len(text) > item["max_chars"] * 1.3:
+            problems.append(f"id {i}가 {len(text)}자로 max_chars {item['max_chars']}자보다 깁니다.")
+        # "한 번", "한 시간"처럼 1은 말버릇으로 흔히 쓰므로 허용
+        invented = number_values(text) - number_values(item["excerpt"]) - {1}
+        if invented:
+            problems.append(f"id {i}의 숫자 {', '.join(map(str, sorted(invented)))}는 그 구간 excerpt에 없습니다. 지어내지 마세요.")
+        told, shown = ordinals(text), excerpt_ordinals(item["excerpt"])
+        if not is_list:
+            if told:
+                problems.append(f"id {i}: 이 영상은 번호 붙은 목록이 아닙니다. '둘째', '셋째' 같은 순서 표현을 쓰지 마세요.")
+            return problems
+        # "둘째, 스마트폰…"을 셋째 팁 화면에 쓰는 일이 있었다. 구간 excerpt에 번호가 있으면 그 번호만 쓰게 한다
+        wrong = sorted(told - shown) if shown else []
+        if wrong:
+            problems.append(f"id {i}의 '{', '.join(f'{n}번째' for n in wrong)}' 항목은 이 구간 화면·대사에 없습니다 "
+                            f"(이 구간: {', '.join(f'{n}번째' for n in sorted(shown))}). 그 항목이 나오는 구간에 쓰세요.")
+        # 반대로 구간에 번호 붙은 항목이 있는데 나레이션이 말하지 않으면 빠진 것 ("소개합니다"만 하고 첫째 팁을 뺌)
+        untold = sorted(shown - told)
+        if untold:
+            problems.append(f"id {i} 구간에는 {', '.join(f'{n}번째' for n in untold)} 항목이 나오는데 나레이션에 없습니다. "
+                            f"'첫째', '둘째'처럼 순서 표현과 함께 그 내용을 쓰세요.")
+        return problems
 
     def check(result: NarrationSet) -> list[str]:
         got = {ln.id: ln.narration.strip() for ln in result.lines}
-        problems = []
-        for item in payload:
-            text = got.get(item["id"], "")
-            if not text:
-                problems.append(f"id {item['id']}의 나레이션이 없습니다.")
-                continue
-            if FOREIGN_SCRIPT.search(text):
-                problems.append(f"id {item['id']}에 한자나 일본어 문자가 있습니다. 한글로만 쓰세요.")
-            if len(text) > item["max_chars"] * 1.3:
-                problems.append(f"id {item['id']}가 {len(text)}자로 max_chars {item['max_chars']}자보다 깁니다.")
-            # "한 번", "한 시간"처럼 1은 말버릇으로 흔히 쓰므로 허용
-            invented = number_values(text) - number_values(item["excerpt"]) - {1}
-            if invented:
-                nums = ", ".join(str(n) for n in sorted(invented))
-                problems.append(f"id {item['id']}의 숫자 {nums}는 그 구간 excerpt에 없습니다. 지어내지 마세요.")
-            # "둘째, 스마트폰…"을 셋째 팁 화면에 쓰는 일이 있었다. 구간 excerpt에 번호가 있으면 그 번호만 쓰게 한다
-            shown = excerpt_ordinals(item["excerpt"])
-            wrong = sorted(ordinals(text) - shown) if shown else []
-            if wrong:
-                names = ", ".join(f"{n}번째" for n in wrong)
-                problems.append(f"id {item['id']}의 '{names}' 항목은 이 구간 화면·대사에 없습니다 "
-                                f"(이 구간: {', '.join(f'{n}번째' for n in sorted(shown))}). 그 항목이 나오는 구간에 쓰세요.")
-            # 반대로 구간에 번호 붙은 항목이 있는데 나레이션이 말하지 않으면 빠진 것 ("소개합니다"만 하고 첫째 팁을 뺌)
-            untold = sorted(shown - ordinals(text))
-            if untold:
-                names = ", ".join(f"{n}번째" for n in untold)
-                problems.append(f"id {item['id']} 구간에는 {names} 항목이 나오는데 나레이션에 없습니다. "
-                                f"'첫째', '둘째'처럼 순서 표현과 함께 그 내용을 쓰세요.")
-        # "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서 표현이 건너뛰면 그 항목이 빠진 것
-        orders = sorted({n for i in sorted(got) for n in ordinals(got[i])})
-        skipped = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]
-        if skipped:
-            names = ", ".join(f"{n}번째" for n in skipped)
-            problems.append(f"순서 표현에서 {names} 항목이 빠졌습니다. 그 내용이 나오는 구간 나레이션에 넣으세요.")
+        problems = [p for item in payload for p in item_problems(item, got.get(item["id"], ""))]
+        if is_list:  # "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서 표현이 건너뛰면 그 항목이 빠진 것
+            orders = sorted({n for text in got.values() for n in ordinals(text)})
+            skipped = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]
+            if skipped:
+                problems.append(f"순서 표현에서 {', '.join(f'{n}번째' for n in skipped)} 항목이 빠졌습니다. "
+                                "그 내용이 나오는 구간 나레이션에 넣으세요.")
         return problems
 
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=1)}]
     result = _ask_until_ok(model, messages, NarrationSet, check, attempts)
-    got = {ln.id: tidy(ln.narration) for ln in result.lines} if result else {}
-    return [got.get(i, "") for i in range(len(items))]
+    got = {ln.id: ln.narration.strip() for ln in result.lines} if result else {}
+
+    for item in payload:  # 문제가 남은 구간만 한 구간씩 다시
+        before = item_problems(item, got.get(item["id"], ""))
+        if not before:
+            continue
+        context = {
+            "앞 구간 나레이션": got.get(item["id"] - 1, ""),
+            "뒤 구간 나레이션": got.get(item["id"] + 1, ""),
+            "고칠 구간": item,
+            "지금 나레이션의 문제": before,
+        }
+        single = [{"role": "system", "content": system},
+                  {"role": "user", "content": "아래 '고칠 구간' 하나의 나레이션만 다시 쓰세요. lines에는 그 id 하나만 넣으세요.\n"
+                                              + json.dumps(context, ensure_ascii=False, indent=1)}]
+
+        def check_one(res: NarrationSet, item=item) -> list[str]:
+            text = next((ln.narration.strip() for ln in res.lines if ln.id == item["id"]), "")
+            return item_problems(item, text)
+
+        fixed = _ask_until_ok(model, single, NarrationSet, check_one, 2)
+        text = next((ln.narration.strip() for ln in fixed.lines if ln.id == item["id"]), "") if fixed else ""
+        if text and len(item_problems(item, text)) < len(before):
+            got[item["id"]] = text
+    return [tidy(got.get(i, "")) for i in range(len(items))]
 
 
 ORDINAL_WORDS = {"첫": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7}
