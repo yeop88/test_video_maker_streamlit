@@ -308,8 +308,11 @@ original_gain, duck_gain = ss.original_gain, ss.duck_gain
 st.title("🎬 AI 쇼츠 나레이션 스튜디오")
 st.caption(
     "영상을 올리면 AI가 **장면과 대사를 이해**해서 하이라이트 구간을 고르고, "
-    "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다."
+    "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
+    "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
+MODE_LABELS = {"upload": "📼 영상으로 만들기", "ai": "✨ 영상 없이 AI로 만들기"}
+ss.setdefault("mode", "upload")
 
 
 def refresh_cards() -> None:
@@ -320,6 +323,8 @@ def refresh_cards() -> None:
 def set_project(p: project.Project, message: str = "") -> None:
     """작업을 화면 상태로 불러온다."""
     ss.project = p
+    if ss.get("mode") != p.kind:  # 최근 작업에서 연 경우 (콜백 안이라 위젯 값을 바꿀 수 있음)
+        ss.mode = p.kind
     for short in p.shorts:
         for clip in short["clips"]:
             clip.setdefault("uid", project.new_id())  # 이전 버전 작업에는 카드 ID가 없음
@@ -352,11 +357,16 @@ with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
         col_info.caption(f"{item['updated']} · {status} · 만든 쇼츠 {item['results']}개")
         col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
 
-# 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*)
-st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>")
-components.html(f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", height=0)
-with st.container(key="video_drop"):
-    uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES)
+st.radio("만드는 방식", list(MODE_LABELS), format_func=MODE_LABELS.get, horizontal=True, key="mode",
+         on_change=close_project, label_visibility="collapsed")
+
+uploaded = None
+if ss.mode == "upload":
+    # 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*)
+    st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>")
+    components.html(f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", height=0)
+    with st.container(key="video_drop"):
+        uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES)
 
 if uploaded is not None:
     data = uploaded.getvalue()
@@ -371,8 +381,37 @@ if flash:
     st.toast(flash)
 
 proj: project.Project | None = ss.get("project")
-if proj is None:
+if proj is not None and proj.kind != ss.mode:
+    proj = None
+if proj is None and ss.mode == "upload":
     st.info(f"영상을 올리면 시작합니다. 긴 영상은 분석할 구간을 {config.MAX_SOURCE_SECONDS // 60}분 이하로 골라 주세요.")
+    st.stop()
+AI_ENGINES = {**generate.ENGINES, "mix": "섞기 (동영상·이미지 번갈아)"}
+if proj is None:  # 영상 없이 AI로: 주제 → 대본·장면 구성
+    gen_ok, gen_msg = generate.available()
+    if not gen_ok:
+        st.warning(gen_msg)
+    st.text_area("어떤 쇼츠를 만들까요?", key="ai_topic", height=90,
+                 placeholder="예: 초보자를 위한 집에서 하는 아침 스트레칭 / 비 오는 날 혼자 즐기는 카페의 분위기")
+    st.radio("장면 만드는 방식", list(AI_ENGINES), format_func=AI_ENGINES.get, key="ai_engine", horizontal=True,
+             help="AI 이미지 + 움직임은 장면당 몇 초, AI 동영상은 장면당 1분 안팎 걸립니다.")
+    st.caption("쇼츠 길이·말투·목소리·배경음악·자막은 사이드바 설정을 씁니다. "
+               "AI가 쓴 대본은 사실과 다를 수 있으니 2단계에서 꼭 확인하세요.")
+    if st.button("1단계 · AI 대본 + 장면 구성", type="primary",
+                 disabled=llm_model is None or not ss.get("ai_topic", "").strip()):
+        with st.status("대본을 쓰는 중...", expanded=True) as status:
+            try:
+                new_project = project.new_ai(ss.ai_topic)
+                title, cards = pipeline.plan_ai(llm_model, ss.ai_topic, target_sec, llm.STYLES[style_label], ss.ai_engine)
+                new_project.shorts = [{"id": project.new_id(), "title": title, "range": None, "focus": "", "clips": cards}]
+                project.save(new_project)
+                set_project(new_project)
+                status.update(label="1단계 완료", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="1단계 실패", state="error")
+                st.exception(e)
+                st.stop()
+        st.rerun()
     st.stop()
 
 
@@ -381,21 +420,27 @@ def probe(path: str) -> media.VideoInfo:
     return media.probe(Path(path))
 
 
-source = proj.source_path
-info = probe(str(source))
-col_video, col_options = st.columns([1, 2])
-with col_video:
-    st.video(str(source))
-with col_options:
-    head, close = st.columns([5, 1])
-    head.markdown(f"**{proj.name}** · {info.duration:.1f}초 · {info.width}×{info.height}" + ("" if info.has_audio else " · 소리 없음"))
-    close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
-    total = round(info.duration, 1)
-    start, end = st.slider("분석할 구간 (초)", 0.0, total, (0.0, min(total, float(config.MAX_SOURCE_SECONDS))), 0.5)
-    if end - start > config.MAX_SOURCE_SECONDS:
-        st.warning(f"{config.MAX_SOURCE_SECONDS // 60}분이 넘으면 분석이 오래 걸리고 장면 설명이 듬성듬성해집니다.")
-    label = "1단계 · 다시 분석 + 쇼츠 구성" if proj.job else "1단계 · 영상 분석 + 쇼츠 구성"
-    run_analyze = st.button(label, type="primary", disabled=llm_model is None)
+run_analyze = False
+if proj.kind == "ai":
+    col_topic, col_close = st.columns([6, 1])
+    col_topic.markdown(f"**✨ {proj.topic}**")
+    col_close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
+else:
+    source = proj.source_path
+    info = probe(str(source))
+    col_video, col_options = st.columns([1, 2])
+    with col_video:
+        st.video(str(source))
+    with col_options:
+        head, close = st.columns([5, 1])
+        head.markdown(f"**{proj.name}** · {info.duration:.1f}초 · {info.width}×{info.height}" + ("" if info.has_audio else " · 소리 없음"))
+        close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
+        total = round(info.duration, 1)
+        start, end = st.slider("분석할 구간 (초)", 0.0, total, (0.0, min(total, float(config.MAX_SOURCE_SECONDS))), 0.5)
+        if end - start > config.MAX_SOURCE_SECONDS:
+            st.warning(f"{config.MAX_SOURCE_SECONDS // 60}분이 넘으면 분석이 오래 걸리고 장면 설명이 듬성듬성해집니다.")
+        label = "1단계 · 다시 분석 + 쇼츠 구성" if proj.job else "1단계 · 영상 분석 + 쇼츠 구성"
+        run_analyze = st.button(label, type="primary", disabled=llm_model is None)
 
 
 def card_key(uid: str, field: str) -> str:
@@ -603,12 +648,12 @@ if run_analyze:
             st.stop()
 
 job = proj.job
-if job is None:
-    st.stop()
-
-with st.expander(f"🔎 AI가 이해한 내용 (장면 {len(job.frames)}개, 대사 {len(job.segments)}개)"):
-    st.caption(f"대사 언어: {job.language or '대사 없음'}")
-    st.text(pipeline.timeline(job) or "(내용 없음)")
+if proj.kind == "upload":
+    if job is None:
+        st.stop()
+    with st.expander(f"🔎 AI가 이해한 내용 (장면 {len(job.frames)}개, 대사 {len(job.segments)}개)"):
+        st.caption(f"대사 언어: {job.language or '대사 없음'}")
+        st.text(pipeline.timeline(job) or "(내용 없음)")
 
 # ───────────────────────── 2단계: 구성 수정 / 3단계: 쇼츠 만들기 ─────────────────────────
 def settings_summary() -> str:
@@ -661,7 +706,15 @@ def build_short(p: project.Project, short: dict, engine) -> None:
 
 
 def replan_short(p: project.Project, short: dict) -> None:
-    """이 쇼츠 한 편만 다시 구성 (여러 편이면 그 편의 원본 범위·주제 안에서)."""
+    """이 쇼츠 한 편만 다시 구성 (여러 편이면 그 편의 원본 범위·주제 안에서, AI 작업이면 주제로 대본부터)."""
+    if p.kind == "ai":
+        engines = {c.get("engine", "image") for c in short["clips"] if c.get("kind") == "ai"}
+        engine = engines.pop() if len(engines) == 1 else "mix"
+        title, clips = pipeline.plan_ai(llm_model, p.topic, target_sec, llm.STYLES[style_label], engine)
+        short.update(title=title, clips=clips)
+        project.save(p)
+        set_project(p)
+        return
     span = tuple(short.get("range") or (0.0, p.job.duration))
     title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label],
                                  span=span if len(p.shorts) > 1 else None, focus=short.get("focus", ""))
@@ -683,7 +736,8 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
             st.caption(f"원본 {a:.0f}~{b:.0f}초 부분 · {short.get('focus', '')}")
     with col_replan:
         st.write("")
-        replan_label = "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기"
+        replan_label = ("🔄 대본 다시 만들기" if p.kind == "ai" else
+                        "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기")
         if st.button(replan_label, key=f"replan_{sid}", disabled=llm_model is None,
                      help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 사이드바의 말투·길이가 반영됩니다."):
             with st.spinner("다시 구성하는 중..."):
@@ -734,14 +788,14 @@ st.caption(
     "순서를 바꾸고 구간을 추가·삭제할 수 있습니다. 나레이션이 구간보다 길면 쇼츠를 만들 때 구간을 자동으로 늘립니다. "
     "고친 내용은 바로 저장됩니다."
 )
-if not proj.shorts:
+if not proj.shorts and proj.kind == "upload":
     if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
         with st.spinner("구성하는 중..."):
             make_plan(proj)
         st.rerun()
     st.stop()
 
-if len(proj.shorts) > 1 or ss.short_count > 1:
+if proj.kind == "upload" and (len(proj.shorts) > 1 or ss.short_count > 1):
     col_count, col_all_plan, col_all_make = st.columns([2, 1, 1])
     col_count.markdown(f"**쇼츠 {len(proj.shorts)}편** · 한 영상에서 서로 다른 주제로 나눴습니다.")
     if col_all_plan.button(f"🔄 {ss.short_count}편으로 다시 나누기", disabled=llm_model is None,

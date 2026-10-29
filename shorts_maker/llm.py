@@ -141,6 +141,79 @@ def _ask_until_ok(model, messages, schema, check, attempts: int):
     return best
 
 
+SCRIPT_PROMPT = """당신은 유튜브 쇼츠·인스타그램 릴스 작가입니다. 원본 영상 없이, 주제만으로 {target}초 안팎의 쇼츠를 기획하세요.
+화면은 장면마다 AI가 그림(또는 짧은 영상)으로 만들고, 그 위에 한국어 나레이션과 자막이 나옵니다.
+
+규칙:
+- scenes: {count}개 안팎(3~8개). 장면 길이 seconds는 3~8초, 합계는 {target}초에 가깝게 (±20%).
+- narration: 그 장면 위에 깔릴 한국어 나레이션. seconds × {cps}자를 넘지 않게.
+  - 첫 장면은 시청자를 붙잡는 한 문장, 마지막 장면은 짧은 마무리.
+  - 장면이 이어지는 하나의 이야기처럼.
+  - 주제에 없는 구체적인 숫자·통계·사람 이름·날짜는 지어내지 마세요. 확실하지 않은 사실은 쓰지 마세요.
+  - 한글로만 쓰세요. 한자, 일본어, 영어 문장은 쓰지 마세요.
+- visual_ko: 그 장면에 보일 그림을 한국어 한 문장으로 (사람이 읽고 고칠 설명).
+- visual: 같은 그림을 이미지 생성 모델용 영어 프롬프트로 (피사체, 장소, 행동, 빛, 구도, 40단어 이내).
+  그림 안에 글자·로고·워터마크가 나오지 않게. 장면마다 그림이 서로 달라야 합니다.
+- title: 화면 위쪽 제목. 한글 15자 이내.
+- 말투: {style}"""
+
+
+class Scene(BaseModel):
+    narration: str
+    visual_ko: str
+    visual: str
+    seconds: float
+
+
+class Script(BaseModel):
+    title: str
+    scenes: list[Scene]
+
+
+def write_script(model: str, topic: str, target_sec: float, style: str, attempts: int = 3) -> Script:
+    """주제만으로 쇼츠 대본: 장면마다 나레이션, 그림 설명(한글), 생성용 영어 프롬프트, 길이."""
+    count = max(3, min(8, round(target_sec / 5)))
+    cps = config.NARRATION_CHARS_PER_SECOND
+    messages = [
+        {"role": "system", "content": SCRIPT_PROMPT.format(target=int(target_sec), count=count, cps=cps, style=style)},
+        {"role": "user", "content": f"주제: {topic.strip()}"},
+    ]
+
+    def check(script: Script) -> list[str]:
+        problems = []
+        scenes = script.scenes
+        if not 3 <= len(scenes) <= 8:
+            problems.append(f"scenes가 {len(scenes)}개입니다. 3~8개로 쓰세요.")
+        total = sum(s.seconds for s in scenes)
+        if scenes and not 0.75 * target_sec <= total <= 1.3 * target_sec:
+            problems.append(f"장면 길이 합계가 {total:.0f}초입니다. {target_sec:.0f}초에 가깝게 맞추세요.")
+        for i, s in enumerate(scenes):
+            if not 2.5 <= s.seconds <= 8.5:
+                problems.append(f"{i}번 장면 길이 {s.seconds}초를 3~8초로 바꾸세요.")
+            if not s.narration.strip() or FOREIGN_SCRIPT.search(s.narration):
+                problems.append(f"{i}번 장면 나레이션을 한글로 쓰세요.")
+            if len(s.narration) > s.seconds * cps * 1.3:
+                problems.append(f"{i}번 장면 나레이션이 {len(s.narration)}자로 너무 깁니다 ({int(s.seconds * cps)}자 이내).")
+            if re.search(r"[가-힣]", s.visual) or not s.visual.strip():
+                problems.append(f"{i}번 장면 visual을 영어로만 쓰세요.")
+        if len(re.findall(r"[가-힣]", script.title)) < 4 or FOREIGN_SCRIPT.search(script.title):
+            problems.append("title을 내용을 담은 한글 제목(4~15자)으로 쓰세요.")
+        # 주제에 없는 숫자("5분", "3가지")를 지어내지 않게 ("한 번"의 1은 허용)
+        written = " ".join([script.title] + [s.narration for s in scenes])
+        invented = number_values(written) - number_values(topic) - {1}
+        if invented:
+            problems.append(f"주제에 없는 숫자 {', '.join(map(str, sorted(invented)))}를 쓰지 마세요.")
+        return problems
+
+    script = _ask_until_ok(model, messages, Script, check, attempts)
+    if script is None or not script.scenes:
+        raise RuntimeError("대본을 만들지 못했습니다. 주제를 조금 더 구체적으로 쓰거나 다시 시도하세요.")
+    script.title = tidy(script.title)
+    for s in script.scenes:
+        s.narration, s.seconds = tidy(s.narration), float(min(8.0, max(3.0, s.seconds)))
+    return script
+
+
 TOPIC_PROMPT = """당신은 긴 영상을 여러 편의 쇼츠로 나누는 편집자입니다.
 타임라인(장면 설명과 대사)을 보고, 서로 다른 주제의 쇼츠 {count}편을 만들 수 있게 원본을 {count}부분으로 나누세요.
 

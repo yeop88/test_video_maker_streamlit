@@ -335,6 +335,39 @@ def test_series_ui(page, combo: Path):
     check("모든 쇼츠 만들기 → 결과 2개 (편마다 제목)", len(titles) == 2 and len(set(titles)) == 2, titles)
 
 
+def test_ai_mode(page, out: Path):
+    """영상 없이 AI로: 주제 → 대본·장면 카드 → 쇼츠 만들기 → 1080x1920 결과."""
+    open_app(page)
+    page.get_by_text("✨ 영상 없이 AI로 만들기").click()
+    page.wait_for_timeout(1500)
+    check("AI 모드에서는 영상 업로드 칸이 없음", page.locator(ZONE).count() == 0)
+    page.get_by_label("어떤 쇼츠를 만들까요?").fill("비 오는 날 창가에서 즐기는 따뜻한 차 한 잔")
+    page.get_by_label("어떤 쇼츠를 만들까요?").press("Control+Enter")
+    page.wait_for_timeout(1000)
+    t = time.time()
+    page.get_by_role("button", name="1단계 · AI 대본 + 장면 구성").click()
+    page.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").wait_for(timeout=300000)
+    page.wait_for_timeout(1500)
+    cards = page.locator('[class*="st-key-cardbox_"]')
+    prompts = [c.get_by_label("장면 설명 (한글로 써도 됩니다)").input_value() for c in cards.all()]
+    check("AI 대본 → AI 장면 카드", cards.count() >= 3 and all(prompts), f"{cards.count()}장면, {time.time() - t:.0f}초")
+    check("AI 모드에는 원본 구간 추가 버튼이 없음", page.get_by_role("button", name="➕ 구간 추가").count() == 0)
+    t = time.time()
+    page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+    page.get_by_role("button", name="⬇️ 다운로드").wait_for(timeout=900000)
+    with page.expect_download() as dl:
+        page.get_by_role("button", name="⬇️ 다운로드").first.click()
+    path = out / f"ai_{dl.value.suggested_filename}"
+    dl.value.save_as(path)
+    info = media.probe(path)
+    check("AI 모드 쇼츠 1080x1920", (info.width, info.height) == (1080, 1920) and info.duration > 10,
+          f"{info.duration:.1f}초, {time.time() - t:.0f}초 걸림")
+    page.screenshot(path=str(out / "ai_mode.png"), full_page=True)
+    page.get_by_text("📼 영상으로 만들기").click()
+    page.wait_for_timeout(1500)
+    check("영상 모드로 돌아가면 업로드 칸", page.locator(ZONE).count() == 1)
+
+
 def test_restore(page):
     """새로고침해도 작업을 이어서 할 수 있는가: 제목을 고치고 새로고침 → 최근 작업에서 열기."""
     box = page.get_by_label("제목 (화면 위쪽)")
@@ -393,6 +426,7 @@ def main():
                 test_full_flow(page, lake, work)
                 test_restore(page)
                 test_series_ui(page, combo)
+                test_ai_mode(page, work)
             browser.close()
     finally:
         died = server.poll() is not None

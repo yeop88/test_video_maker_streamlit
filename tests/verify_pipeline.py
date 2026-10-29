@@ -16,7 +16,7 @@ import soundfile as sf
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from shorts_maker import asr, config, llm, media, music, pipeline, subtitles, tts, voices
+from shorts_maker import asr, config, generate, llm, media, music, pipeline, subtitles, tts, voices
 from shorts_maker.korean_numbers import number_values
 import edge_tts
 
@@ -435,8 +435,74 @@ def test_series():
     log(f"{name} passed={r['passed']} {r['checks']}")
 
 
+def test_ai_only():
+    """T5: 영상 없이 주제만으로 (AI 대본 → AI 장면: 동영상·이미지 섞기)."""
+    name = "T5_ai_only_no_upload"
+    log(f"===== {name} =====")
+    ok, message = generate.available()
+    if not ok:
+        log(f"{name} 건너뜀: {message}")
+        return
+    folder = OUT / name
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    topic = "비 오는 날 창가에서 즐기는 따뜻한 차 한 잔"
+    t1 = time.time()
+    title, cards = pipeline.plan_ai(model, topic, 20, llm.STYLES["감성 스토리"], "mix")
+    r = {"test": name, "topic": title, "timings": {"script": round(time.time() - t1, 1)}}
+    narration = " ".join(c["narration"] for c in cards)
+    r["scenes"] = [{k: c[k] for k in ("engine", "seconds", "prompt_ko", "prompt", "narration")} for c in cards]
+    t2 = time.time()
+    engine = tts.EdgeTTSEngine("ko-KR-SunHiNeural", 0)
+    out, report = pipeline.make_short(None, title, cards, engine, 0.8, 0.2, "crop", 72, 20, "#FFFFFF",
+                                      work_dir=folder / "work", out_dir=folder, subtitle_style="karaoke")
+    r["timings"]["make_short"] = round(time.time() - t2, 1)
+    oi = media.probe(out)
+    r["output"] = f"{oi.width}x{oi.height} {oi.duration:.2f}s"
+    segs, _ = asr.transcribe(whisper, out)
+    heard = " ".join(seg.text for seg in segs)
+    r["narration_heard_coverage"] = round(coverage(narration, heard), 3)
+    # 장면이 서로 다른가 (장면 가운데 화면끼리 차이), AI 동영상 장면이 움직이는가
+    def frame(t):
+        raw = media.run_ffmpeg(["-ss", f"{t:.2f}", "-i", str(out), "-frames:v", "1", "-vf", "scale=54:96,format=gray",
+                                "-f", "rawvideo", "-"])
+        return np.frombuffer(raw[: 54 * 96], np.uint8).astype(int)
+    starts = [float(x["쇼츠 위치"].split("~")[0]) for x in report]
+    ends = [float(x["쇼츠 위치"].split("~")[1].rstrip("초")) for x in report]
+    mids = [frame((a + b) / 2) for a, b in zip(starts, ends)]
+    r["scene_difference"] = [round(float(np.abs(x - y).mean()), 1) for x, y in zip(mids, mids[1:])]
+    motion = [round(float(np.abs(frame(a + 0.4) - frame(min(b - 0.3, a + 3.0))).mean()), 1)
+              for c, a, b in zip(cards, starts, ends) if c["engine"] == "video"]
+    r["video_scene_motion"] = motion
+    checks = {
+        "output_1080x1920": (oi.width, oi.height) == (1080, 1920) and oi.has_audio,
+        "length_near_target": 10 <= oi.duration <= 32,
+        "3+_scenes_mixed": len(cards) >= 3 and {"image", "video"} <= {c["engine"] for c in cards},
+        "narration_korean": not llm.FOREIGN_SCRIPT.search(narration + title),
+        "prompts_english": all(c["prompt"] and not re.search(r"[가-힣]", c["prompt"]) for c in cards),
+        "no_invented_numbers": not (number_values(narration + " " + title) - number_values(topic) - {1}),
+        "narration_heard>=0.85": r["narration_heard_coverage"] >= 0.85,
+        "scenes_look_different": all(d > 8 for d in r["scene_difference"]),
+        "ai_video_moves": bool(motion) and all(m > 2 for m in motion),
+        "no_narration_cut": not any("잘림" in x["상태"] for x in report),
+        "srt_thumbnail": out.with_suffix(".srt").exists() and out.with_suffix(".jpg").exists(),
+    }
+    r["checks"] = {k: bool(v) for k, v in checks.items()}
+    r["passed"] = all(r["checks"].values())
+    r["report"] = report
+    r["heard"] = heard
+    shutil.copy(out.with_suffix(".jpg"), OUT / f"{name}_thumbnail.jpg")
+    for i, (a, b) in enumerate(zip(starts, ends)):
+        media.run_ffmpeg(["-ss", f"{(a + b) / 2:.2f}", "-i", str(out), "-frames:v", "1", "-vf", "scale=270:480",
+                          str(OUT / f"{name}_scene{i}.png")])
+    results.append(r)
+    log(f"{name} passed={r['passed']} {r['checks']}")
+
+
 if {"T1_korean_lake_vlog", "T2_english_sleep_tips_slides"} <= set(sources):
     test_series()
+test_ai_only()
 
 (OUT / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 log("ALL DONE " + " ".join(f"{r['test']}={'PASS' if r['passed'] else 'FAIL'}" for r in results))

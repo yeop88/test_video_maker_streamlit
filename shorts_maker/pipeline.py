@@ -166,6 +166,22 @@ def plan_series(job: Job, model: str, count: int, target_sec: float, style: str,
     return shorts
 
 
+def plan_ai(model: str, topic: str, target_sec: float, style: str, engine: str = "image") -> tuple[str, list[dict]]:
+    """영상 없이 주제만으로: (제목, AI 장면 카드 목록). engine "mix"는 이미지·동영상을 번갈아 쓴다 (첫 장면은 동영상)."""
+    import uuid
+
+    script = llm.write_script(model, topic, target_sec, style)
+    cards = []
+    for i, scene in enumerate(script.scenes):
+        kind = ("video" if i % 2 == 0 else "image") if engine == "mix" else engine
+        cards.append({
+            "uid": uuid.uuid4().hex[:8], "kind": "ai", "engine": kind, "seed": i + 1, "seconds": scene.seconds,
+            "prompt_ko": scene.visual_ko.strip(), "prompt": scene.visual.strip(), "prompt_src": scene.visual_ko.strip(),
+            "narration": scene.narration,
+        })
+    return script.title, cards
+
+
 def add_missing_items(job: Job, clips: list[dict], span: tuple[float, float] | None = None) -> list[dict]:
     """번호 붙은 목록 영상(화면 "TIP 2", 대사 "Second")에서 고른 구간에 빠진 번호가 있으면 그 부분을 구간으로 넣는다.
     LLM이 핵심 내용을 다 담았다고 답하고도 둘째 팁 구간을 빼먹은 일이 있었다."""
