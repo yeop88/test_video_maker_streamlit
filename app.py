@@ -14,7 +14,11 @@ from shorts_maker import config, llm, media, music, pipeline, presets, project, 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
 ENGINE_LABELS = {"edge": "Edge TTS (기본 목소리, 인터넷 필요)", "chatterbox": "Chatterbox (GPU, 목소리 샘플 사용 가능)"}
-LAYOUT_LABELS = {"blur": "블러 배경 (가로 영상·글자 많은 화면 추천)", "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)"}
+LAYOUT_LABELS = {
+    "blur": "블러 배경 (가로 영상·글자 많은 화면 추천)",
+    "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)",
+    "smart": "피사체 따라 크롭 (사람·움직임을 따라감)",
+}
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 SUBTITLE_LABELS = {"plain": "기본", "karaoke": "단어 강조 (읽는 낱말 색칠)"}
 VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
@@ -477,7 +481,7 @@ def settings_summary() -> str:
         voice = f"{VOICE_LABELS.get(ss.edge_voice, ss.edge_voice)} {ss.rate:+d}%"
     else:
         voice = f"Chatterbox {'목소리 샘플' if voice_sample else '기본 목소리'}"
-    layout = {"blur": "블러 배경", "crop": "가운데 크롭"}.get(ss.layout, ss.layout)
+    layout = {"blur": "블러 배경", "crop": "가운데 크롭", "smart": "피사체 따라 크롭"}.get(ss.layout, ss.layout)
     subs = "단어 강조 자막" if ss.subtitle_style == "karaoke" else "기본 자막"
     track = next((t for t in music.list_tracks() if t["id"] == ss.bgm_track), None)
     bgm = f"배경음악 {track['name']} {ss.bgm_gain:.2f}" if track else "배경음악 없음"

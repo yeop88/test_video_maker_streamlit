@@ -44,6 +44,7 @@ NARRATE_PROMPT = """당신은 쇼츠 나레이션 작가입니다. 쇼츠는 아
 - 각 구간의 나레이션은 반드시 그 구간의 excerpt(그 시간의 화면 설명과 대사)에 나온 내용만 다루세요.
   다른 구간의 내용을 미리 말하거나 뒤늦게 말하면 화면과 맞지 않습니다.
 - excerpt에 팁·단계·항목이 여러 개 나오면(화면 글자 "TIP 1", "TIP 2"나 대사) 하나도 빠뜨리지 말고 모두 짧게 담으세요.
+- 번호 붙은 항목(화면 "TIP 2", 대사 "Second")이 나오는 구간은 "둘째,"처럼 그 번호의 순서 표현으로 시작해 그 항목 내용을 쓰세요.
 - max_chars(공백 포함 글자 수)를 넘지 마세요.
 - 첫 구간은 시청자를 붙잡는 한 문장으로 시작하고, 마지막 구간은 짧게 마무리하세요.
 - 구간이 이어지는 하나의 이야기처럼 자연스럽게 연결하세요.
@@ -216,6 +217,12 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
                 names = ", ".join(f"{n}번째" for n in wrong)
                 problems.append(f"id {item['id']}의 '{names}' 항목은 이 구간 화면·대사에 없습니다 "
                                 f"(이 구간: {', '.join(f'{n}번째' for n in sorted(shown))}). 그 항목이 나오는 구간에 쓰세요.")
+            # 반대로 구간에 번호 붙은 항목이 있는데 나레이션이 말하지 않으면 빠진 것 ("소개합니다"만 하고 첫째 팁을 뺌)
+            untold = sorted(shown - ordinals(text))
+            if untold:
+                names = ", ".join(f"{n}번째" for n in untold)
+                problems.append(f"id {item['id']} 구간에는 {names} 항목이 나오는데 나레이션에 없습니다. "
+                                f"'첫째', '둘째'처럼 순서 표현과 함께 그 내용을 쓰세요.")
         # "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서 표현이 건너뛰면 그 항목이 빠진 것
         orders = sorted({n for i in sorted(got) for n in ordinals(got[i])})
         skipped = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]

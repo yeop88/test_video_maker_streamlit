@@ -30,7 +30,7 @@ CHOICES = {
     "style": list(STYLES),
     "engine": ["edge", "chatterbox"],
     "edge_voice": list(EDGE_VOICES.values()),
-    "layout": ["blur", "crop"],
+    "layout": ["blur", "crop", "smart"],
     "subtitle_style": ["plain", "karaoke"],
 }
 

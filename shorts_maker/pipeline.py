@@ -17,7 +17,7 @@ from typing import Callable
 import numpy as np
 import soundfile as sf
 
-from . import config, llm, media, mixing, music, subtitles
+from . import config, llm, media, mixing, music, reframe, subtitles
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
@@ -151,7 +151,38 @@ def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list
             c["end"] += grow_end
             c["start"] -= min(max(0.0, before), share - grow_end)
         clips = normalize_clips(job, clips)
+    clips = add_missing_items(job, clips)
     return selection.title, narrate(job, split_long_clips(job, clips), model, style)
+
+
+def add_missing_items(job: Job, clips: list[dict]) -> list[dict]:
+    """번호 붙은 목록 영상(화면 "TIP 2", 대사 "Second")에서 고른 구간에 빠진 번호가 있으면 그 부분을 구간으로 넣는다.
+    LLM이 핵심 내용을 다 담았다고 답하고도 둘째 팁 구간을 빼먹은 일이 있었다."""
+    where: dict[int, list[float]] = {}
+    for f in job.frames:
+        for n in llm.excerpt_ordinals(f["caption"]):
+            where.setdefault(n, []).append(f["t"])
+    for s in job.segments:
+        for n in llm.excerpt_ordinals(s["text"]):
+            where.setdefault(n, []).extend([s["start"], s["end"]])
+    items = sorted(where)
+    if len(items) < 2 or items != list(range(1, len(items) + 1)):  # 1부터 이어지는 번호가 아니면 목록이 아님
+        return clips
+    covered = set()
+    for c in clips:
+        covered |= llm.excerpt_ordinals(llm.timeline_text(job.frames, job.segments, c["start"], c["end"]))
+    added = []
+    for n in items:
+        if n in covered:
+            continue
+        a, b = min(where[n]) - 0.5, max(where[n]) + 1.5
+        b = min(b, a + 12.0)
+        if any(c["start"] < b and a < c["end"] for c in clips + added):  # 겹치면 넣지 않음
+            continue
+        added.append({"start": max(0.0, a), "end": min(job.duration, b), "narration": ""})
+    if not added:
+        return clips
+    return normalize_clips(job, sorted(clips + added, key=lambda c: c["start"]))
 
 
 def split_long_clips(job: Job, clips: list[dict]) -> list[dict]:
@@ -401,5 +432,12 @@ def make_short(
     out_dir = out_dir or job.dir
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"shorts_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
-    media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir)
+    crop_x = None
+    if layout == "smart":  # 피사체 따라 자르기 (세로로 자를 여유가 있는 가로 영상일 때만)
+        info = media.probe(cut)
+        scaled_w = int(round(info.width * h / info.height / 2)) * 2
+        if scaled_w > w + 8:
+            track = reframe.smooth(reframe.subject_positions(cut, info.width, info.height))
+            crop_x = reframe.crop_x_expression(track, scaled_w, w)
+    media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir, crop_x=crop_x)
     return out, report

@@ -30,7 +30,7 @@ def log(msg): print(f"[{time.time()-T0:6.1f}s] {msg}", flush=True)
 TESTS = [
     dict(
         name="T1_korean_lake_vlog",
-        size=(1280, 720), bgm=0.08, target=30, style="감성 스토리", engine="edge", layout="blur", subtitles="karaoke",
+        size=(1280, 720), bgm=0.08, target=30, style="감성 스토리", engine="edge", layout="smart", subtitles="karaoke",
         # (장면 이미지, 화면 글자, [(목소리, 대사)])
         scenes=[
             (WALL / "ThemeC/img28.jpg", "", [("ko-KR-SunHiNeural", "안녕하세요."),
@@ -333,7 +333,8 @@ for t in TESTS:
         r["music_duck_ratio"] = round(rms(track[inside]) / max(1e-9, rms(track[away])), 3) if away.sum() > SR else None
         checks["music_full_length"] = abs(r["music_seconds"] - oi.duration) < 0.3 and r["music_tail_rms"] > 0.01
         checks["music_in_output"] = 0.7 <= r["music_in_output"] <= 1.3
-        checks["music_ducked(<0.55)"] = r["music_duck_ratio"] is not None and r["music_duck_ratio"] < 0.55
+        if r["music_duck_ratio"] is not None:  # 나레이션이 거의 계속 나오면 비교할 구간이 없어 판정하지 않음
+            checks["music_ducked(<0.55)"] = r["music_duck_ratio"] < 0.55
     if t.get("subtitles") == "karaoke":
         # 단어 강조: 낱말마다 이벤트 하나, 시간 순서대로, 강조된 낱말 수 = 나레이션 낱말 수
         events = [c for c in cues if r"\c&H" in c[2]]

@@ -16,6 +16,9 @@ transformers==5.2.0
 # 목소리 구간 감지 (배경음악을 대사로 잘못 인식하지 않도록)
 silero-vad==6.2.3
 
+# 피사체 따라 자르기: 얼굴 찾기 (NumPy 1.x와 맞는 버전)
+opencv-python-headless==4.11.0.86
+
 # 장면 이해 + 쇼츠 구성·나레이션 대본 (로컬 Ollama, vision 모델)
 ollama>=0.4
 

@@ -118,14 +118,17 @@ def render_short(
     layout: str,
     size: tuple[int, int],
     cwd: Path,
+    crop_x: str | None = None,
 ) -> None:
-    """세로 영상으로 변환하고 자막을 입힌다.
+    """세로 영상으로 변환하고 자막을 입힌다. layout "smart"는 crop_x(시간 t에 대한 식) 위치를 잘라 낸다.
 
     ass 필터는 Windows 경로(C:\\...)의 콜론을 파싱하지 못하므로,
     자막과 폰트는 cwd 기준 상대 경로로 넘긴다.
     """
     w, h = size
-    if layout == "crop":
+    if layout == "smart" and crop_x is not None:  # 높이를 맞추고, 피사체를 따라 가로 위치를 옮기며 자름
+        base = f"[0:v]scale=-2:{h},crop={w}:{h}:x='{crop_x}':y=0,setsar=1[base]"
+    elif layout in ("crop", "smart"):
         base = f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[base]"
     else:  # blur: 원본은 가운데, 위아래는 흐린 배경
         base = (
