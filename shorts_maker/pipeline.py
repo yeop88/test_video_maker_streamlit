@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 import time
@@ -54,19 +53,6 @@ def save_upload(upload_id: str, filename: str, data: bytes) -> Path:
     if not path.exists():
         path.write_bytes(data)
     return path
-
-
-def save_voice_sample(filename: str, data: bytes) -> Path:
-    """Chatterbox용 목소리 샘플을 WAV로 바꿔 저장한다 (같은 파일이면 재사용)."""
-    folder = config.WORK_DIR / "voices"
-    folder.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha1(data).hexdigest()[:12]
-    wav = folder / f"{key}.wav"
-    if not wav.exists():
-        raw = folder / f"{key}{Path(filename).suffix.lower()}"
-        raw.write_bytes(data)
-        media.extract_audio(raw, wav, sr=24000, channels=1)
-    return wav
 
 
 def prepare_job(source: Path, start: float, end: float) -> Job:

@@ -169,11 +169,31 @@ def test_music_upload(page, song: Path):
     page.wait_for_timeout(1500)
     side.get_by_role("button", name="보관함에 넣기").click()
     page.wait_for_timeout(2500)
-    combo = side.get_by_role("combobox", name="배경음악")
-    check("올린 음악이 배경음악으로 선택됨", song.stem in combo.inner_text() or song.stem in side.inner_text(),
-          side.inner_text()[:0])
+    picked = side.get_by_role("combobox", name="배경음악").input_value()  # 고른 값은 입력칸 value에 있음
+    check("올린 음악이 배경음악으로 선택됨", song.stem in picked, picked)
     check("배경음악 미리 듣기", side.locator("audio").count() >= 1)
     check("배경음악 크기 조절", side.get_by_text("배경음악 크기", exact=True).count() == 1)
+
+
+def test_voice_library(page):
+    """목소리 보관함: Chatterbox 고르기 → 가상 목소리 만들기 → 바로 골라짐 → 미리 듣기 → Edge로 되돌리기."""
+    open_app(page)
+    side = page.locator('[data-testid="stSidebar"]')
+    side.get_by_text("Chatterbox (GPU, 목소리 샘플 사용 가능)").click()
+    page.wait_for_timeout(1500)
+    side.get_by_text("➕ 새 목소리 만들기").click()
+    side.get_by_role("tab", name="가상 목소리").click()
+    side.get_by_label("이름").last.fill("테스트 해설자")
+    side.get_by_role("button", name="만들기").click()
+    side.get_by_text("목소리를 보관함에 넣고 골랐습니다").wait_for(timeout=60000)
+    page.wait_for_timeout(1000)
+    picked = side.get_by_role("combobox", name="복제할 목소리").input_value()  # 고른 값은 입력칸 value에 있음
+    check("가상 목소리 만들기 → 바로 골라짐", "테스트 해설자" in picked, picked)
+    side.get_by_role("button", name="▶ 미리 듣기").click()
+    side.locator("audio").first.wait_for(timeout=240000)
+    check("고른 목소리로 미리 듣기", side.locator("audio").count() >= 1)
+    side.get_by_text("Edge TTS (기본 목소리, 인터넷 필요)").click()
+    page.wait_for_timeout(1500)
 
 
 def test_full_flow(page, lake: Path, out: Path):
@@ -331,6 +351,7 @@ def main():
             test_drag_drop(page, lake, art)
             test_music_upload(page, song)
             if not QUICK:
+                test_voice_library(page)
                 test_full_flow(page, lake, work)
                 test_restore(page)
                 test_series_ui(page, combo)

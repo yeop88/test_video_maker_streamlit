@@ -40,7 +40,7 @@
 | 대사 인식 | [openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) | MIT |
 | 목소리 구간 감지 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT |
 | 나레이션 음성 (기본) | Microsoft Edge TTS (`edge-tts`) | 온라인 서비스 |
-| 나레이션 음성 (선택) | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) Multilingual, 기본 목소리 또는 목소리 샘플 | MIT |
+| 나레이션 음성 (선택) | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) Multilingual, 기본 목소리 또는 **목소리 보관함**의 목소리를 제로샷 복제 | MIT |
 
 ## 실행 환경
 
@@ -93,6 +93,16 @@ python -m venv .venv-gen
 
 사이드바에서 LLM, 나레이션 말투(정보 전달 / 유쾌한 리뷰 / 감성 스토리), 쇼츠 길이, 목소리, 원본 소리 크기, 세로 변환 방식(블러 배경 / 가운데 크롭 / **피사체 따라 크롭**: 얼굴·눈에 띄는 곳·움직임을 따라 자르는 위치를 옮김), 제목 표시, 자막 스타일(기본 / **단어 강조**: 읽는 낱말을 강조 색으로), 자막 크기·위치·색, **배경음악**(올린 음악을 보관함에 넣고 골라 쓰기, 반복·페이드·나레이션 중 줄이기)을 바꿀 수 있습니다. 배경음악은 권리가 있는 음악만 쓰세요.
 
+### 목소리 보관함 (제로샷 음성 복제)
+
+음성 엔진에서 Chatterbox를 고르면 「복제할 목소리」에서 보관함의 목소리를 고를 수 있습니다. Chatterbox가 목소리 샘플(5~15초)을 듣고 그 목소리로 나레이션을 읽습니다.
+
+- **파일**: 목소리 파일을 올립니다.
+- **녹음**: 브라우저에서 바로 녹음합니다 (읽을 문장을 보여 줍니다).
+- **가상 목소리**: Edge TTS 목소리의 음높이와 음색을 바꿔 실존 인물이 아닌 새 목소리를 만듭니다.
+- 파일·녹음은 **본인 목소리이거나 목소리 주인의 동의를 받았을 때만** 저장됩니다 (확인란).
+- 「▶ 미리 듣기」로 예시 문장을 들어 보고 고르세요.
+
 ### 설정 프리셋
 
 자주 쓰는 설정 조합을 사이드바 맨 위 **💾 프리셋**에 저장해 두고 불러올 수 있습니다.
@@ -124,6 +134,10 @@ shorts_maker/
   music.py              배경음악 보관함, 반복·페이드
   reframe.py            피사체 따라 크롭 (얼굴·saliency·움직임)
   extras.py             SRT 자막, 썸네일 이미지
+  voices.py             목소리 보관함 (올리기·녹음·가상 목소리)
+  generate.py           AI 장면·음악 생성 (생성 환경을 별도 프로세스로)
+gen/
+  worker.py             생성 작업 프로세스 (.venv-gen에서 실행)
 ui/
   dropzone.css, .js     드래그 앤 드롭 업로드 (큰 업로드 칸, 화면 어디에 놓아도 업로드)
 tests/

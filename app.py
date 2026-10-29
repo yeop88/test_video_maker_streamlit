@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, llm, media, music, pipeline, presets, project, tts
+from shorts_maker import config, llm, media, music, pipeline, presets, project, tts, voices
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -70,6 +70,9 @@ def apply_preset(name: str) -> None:
         ss.preset_msg = ("error", str(e))
         return
     notes = [f"설정 {', '.join(dropped)}은(는) 올바르지 않아 기본값을 썼습니다"] if dropped else []
+    if values["voice_id"] and not voices.sample_path(values["voice_id"]):
+        notes.append("프리셋의 목소리가 보관함에 없어 기본 목소리를 씁니다")
+        values["voice_id"] = ""
     if values["bgm_track"] and not music.track_path(values["bgm_track"]):
         notes.append("프리셋의 배경음악이 보관함에 없어 배경음악 없이 둡니다")
         values["bgm_track"] = ""
@@ -101,6 +104,37 @@ def add_music_upload() -> None:
         ss.preset_msg = ("success", f"'{file.name}'을(를) 배경음악 보관함에 넣었습니다.")
     except RuntimeError as e:
         ss.preset_msg = ("error", str(e))
+
+
+PREVIEW_TEXT = "안녕하세요. 이 목소리로 쇼츠 나레이션을 읽어 드릴게요."
+
+
+def add_voice(kind: str) -> None:
+    """목소리 보관함에 새 목소리를 넣고 바로 고른다 (파일·녹음은 동의 확인 필요)."""
+    try:
+        if kind == "virtual":
+            voice_id = voices.create_virtual(ss.get("new_voice_name_virtual", ""), ss.virtual_base,
+                                             ss.virtual_pitch, ss.virtual_formant)
+        else:
+            file = ss.get("new_voice_file" if kind == "upload" else "new_voice_rec")
+            if file is None:
+                raise ValueError("목소리 파일을 올리거나 녹음해 주세요.")
+            name = ss.get("new_voice_name_file" if kind == "upload" else "new_voice_name_rec", "")
+            consent = ss.get("consent_file" if kind == "upload" else "consent_rec", False)
+            voice_id = voices.add_sample(name, getattr(file, "name", "recording.wav"), file.getvalue(), kind, consent)
+    except (ValueError, RuntimeError) as e:
+        ss.preset_msg = ("error", str(e))
+        return
+    ss.voice_id = voice_id
+    ss.pop("voice_preview", None)
+    ss.preset_msg = ("success", "목소리를 보관함에 넣고 골랐습니다. 「▶ 미리 듣기」로 들어 보세요.")
+
+
+def delete_voice() -> None:
+    voices.delete(ss.voice_id)
+    ss.voice_id = ""
+    ss.pop("voice_preview", None)
+    ss.preset_msg = ("success", "목소리를 지웠습니다.")
 
 
 def delete_preset(name: str) -> None:
@@ -162,16 +196,50 @@ with st.sidebar:
 
     st.subheader("나레이션 목소리")
     st.radio("음성 엔진", presets.CHOICES["engine"], format_func=ENGINE_LABELS.get, key="engine")
-    voice_sample = None
     if ss.engine == "edge":
         st.selectbox("목소리", presets.CHOICES["edge_voice"], format_func=VOICE_LABELS.get, key="edge_voice")
         setting_slider("말하기 속도 (%)", "rate")
     else:
-        setting_slider("감정 표현 강도", "exaggeration")
-        voice_sample = st.file_uploader(
-            "목소리 샘플 (선택, 5~15초)", type=["wav", "mp3", "m4a"],
-            help="비워 두면 Chatterbox 기본 목소리를 씁니다. 본인 목소리나 동의받은 목소리만 올리세요. 프리셋에는 저장되지 않습니다.",
+        library = {v["id"]: v for v in voices.list_voices()}
+        if ss.voice_id not in library:
+            ss.voice_id = ""
+        col_voice, col_del_voice = st.columns([5, 1])
+        col_voice.selectbox(
+            "복제할 목소리", [""] + list(library), key="voice_id",
+            format_func=lambda i: "기본 목소리" if not i else
+            f"{'🤖' if library[i]['source'] == 'virtual' else '🎙️'} {library[i]['name']}",
+            help="보관함의 목소리 샘플을 Chatterbox가 제로샷으로 따라 해서 나레이션을 읽습니다.",
         )
+        col_del_voice.button("🗑", key="del_voice", disabled=not ss.voice_id, help="이 목소리를 보관함에서 지우기",
+                             on_click=delete_voice)
+        setting_slider("감정 표현 강도", "exaggeration")
+        if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (GPU, 몇 초)."):
+            with st.spinner("목소리를 만드는 중..."):
+                engine = tts.ChatterboxEngine(get_chatterbox(), voices.sample_path(ss.voice_id), ss.exaggeration)
+                ss.voice_preview = str(engine.synthesize_cached(PREVIEW_TEXT, config.WORK_DIR / "voices" / "preview"))
+        if ss.get("voice_preview") and Path(ss.voice_preview).exists():
+            st.audio(ss.voice_preview)
+        with st.expander("➕ 새 목소리 만들기"):
+            tab_file, tab_rec, tab_virtual = st.tabs(["파일", "녹음", "가상 목소리"])
+            with tab_file:
+                st.text_input("이름", key="new_voice_name_file", placeholder="예: 내 목소리")
+                st.file_uploader("목소리 파일 (5~15초)", type=["wav", "mp3", "m4a"], key="new_voice_file")
+                st.checkbox("본인 목소리이거나 동의를 받았습니다", key="consent_file")
+                st.button("보관함에 넣기", key="add_voice_file", on_click=add_voice, args=("upload",), width="stretch")
+            with tab_rec:
+                st.text_input("이름", key="new_voice_name_rec", placeholder="예: 내 목소리 (녹음)")
+                st.caption(f"이 문장을 또박또박 읽어 주세요 (5~15초): {voices.VIRTUAL_SCRIPT}")
+                st.audio_input("녹음", key="new_voice_rec")
+                st.checkbox("본인 목소리이거나 동의를 받았습니다", key="consent_rec")
+                st.button("보관함에 넣기", key="add_voice_rec", on_click=add_voice, args=("record",), width="stretch")
+            with tab_virtual:
+                st.caption("Edge TTS 목소리의 음높이와 음색을 바꿔 실존 인물이 아닌 새 목소리를 만듭니다.")
+                st.text_input("이름", key="new_voice_name_virtual", placeholder="예: 차분한 해설자")
+                st.selectbox("바탕 목소리", list(tts.EDGE_VOICES.values()), format_func=VOICE_LABELS.get, key="virtual_base")
+                st.slider("음높이 (반음)", -6.0, 6.0, 0.0, 0.5, key="virtual_pitch", help="낮추면 굵고 낮은 목소리, 높이면 밝은 목소리")
+                st.slider("음색 (반음)", -4.0, 4.0, 0.0, 0.5, key="virtual_formant",
+                          help="목소리 울림(포먼트)을 바꿉니다. 낮추면 더 어른스럽고, 높이면 더 가볍게 들립니다.")
+                st.button("만들기", key="add_voice_virtual", on_click=add_voice, args=("virtual",), width="stretch")
 
     st.subheader("소리")
     setting_slider("원본 소리 크기", "original_gain")
@@ -442,7 +510,8 @@ def settings_summary() -> str:
     if ss.engine == "edge":
         voice = f"{VOICE_LABELS.get(ss.edge_voice, ss.edge_voice)} {ss.rate:+d}%"
     else:
-        voice = f"Chatterbox {'목소리 샘플' if voice_sample else '기본 목소리'}"
+        chosen = next((v for v in voices.list_voices() if v["id"] == ss.voice_id), None)
+        voice = f"Chatterbox {chosen['name'] if chosen else '기본 목소리'}"
     layout = {"blur": "블러 배경", "crop": "가운데 크롭", "smart": "피사체 따라 크롭"}.get(ss.layout, ss.layout)
     subs = "단어 강조 자막" if ss.subtitle_style == "karaoke" else "기본 자막"
     track = next((t for t in music.list_tracks() if t["id"] == ss.bgm_track), None)
@@ -453,8 +522,7 @@ def settings_summary() -> str:
 def make_engine():
     if ss.engine == "edge":
         return tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
-    reference = pipeline.save_voice_sample(voice_sample.name, voice_sample.getvalue()) if voice_sample else None
-    return tts.ChatterboxEngine(get_chatterbox(), reference, ss.exaggeration)
+    return tts.ChatterboxEngine(get_chatterbox(), voices.sample_path(ss.voice_id), ss.exaggeration)
 
 
 def build_short(p: project.Project, short: dict, engine) -> None:

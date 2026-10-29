@@ -16,7 +16,7 @@ import soundfile as sf
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from shorts_maker import asr, config, llm, media, music, pipeline, subtitles, tts
+from shorts_maker import asr, config, llm, media, music, pipeline, subtitles, tts, voices
 from shorts_maker.korean_numbers import number_values
 import edge_tts
 
@@ -156,6 +156,15 @@ def make_video(t, folder):
     return video, lines, scenes
 
 
+def median_f0(path):
+    """목소리 음높이(기본 주파수) 중앙값 Hz. 소리가 큰 부분만."""
+    import librosa
+    y = media.load_audio(Path(path), 16000, 1)[:, 0]
+    f = librosa.yin(y, fmin=60, fmax=400, sr=16000)
+    e = librosa.feature.rms(y=y)[0][: len(f)]
+    return float(np.median(f[e > 0.3 * e.max()]))
+
+
 def split_sentences_all(clips):
     return [sent for c in clips for sent in pipeline.split_sentences(c["narration"])]
 
@@ -240,12 +249,9 @@ for t in TESTS:
         if chatterbox is None:
             chatterbox = tts.load_chatterbox()
         reference = None
-        if t["engine"] == "chatterbox_sample":  # 목소리 샘플 자리에 합성 음성을 사용
-            sample = folder / "voice_sample.mp3"
-            asyncio.run(edge_tts.Communicate(
-                "안녕하세요. 저는 오늘 여러분께 아름다운 작품들을 소개해 드릴 안내자입니다. 천천히 함께 둘러보시죠.",
-                "ko-KR-InJoonNeural").save(str(sample)))
-            reference = pipeline.save_voice_sample(sample.name, sample.read_bytes())
+        if t["engine"] == "chatterbox_sample":  # 목소리 보관함의 가상 목소리 (낮게 바꾼 남성 목소리)
+            reference = voices.sample_path(voices.create_virtual("검증용 가상 목소리", "ko-KR-InJoonNeural", -3, -2))
+            r["voice_sample_f0"] = round(median_f0(reference))
         engine = tts.ChatterboxEngine(chatterbox, reference, 0.5)
     music_path = None
     if t.get("music"):
@@ -358,6 +364,9 @@ for t in TESTS:
         r["karaoke_tokens"] = sum(len(subtitles.clean_text(txt).split()) for txt in split_sentences_all(clips))
         checks["karaoke_one_event_per_word"] = len(events) == r["karaoke_tokens"]
         checks["karaoke_in_order"] = all(a[0] <= b[0] for a, b in zip(events, events[1:]))
+    if r.get("voice_sample_f0"):  # 제로샷 복제: 나레이션 음높이가 목소리 샘플과 비슷한가
+        r["narration_f0"] = round(median_f0(job.dir / "narration.wav"))
+        checks["voice_clone_pitch(±15%)"] = abs(r["narration_f0"] - r["voice_sample_f0"]) <= 0.15 * r["voice_sample_f0"]
     if t["name"].startswith("T3"):
         checks["ducking(ratio<0.35)"] = r["duck_amplitude_ratio"] is not None and r["duck_amplitude_ratio"] < 0.35
         checks["no_speech_in_silent_video"] = r["speech_segments"] == 0

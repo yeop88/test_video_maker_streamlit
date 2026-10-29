@@ -5,6 +5,12 @@
 ## [Unreleased]
 
 ### Added
+- **목소리 보관함 (제로샷 음성 복제)** (`shorts_maker/voices.py`): Chatterbox를 고르면 「복제할 목소리」에서 보관함의 목소리를 고릅니다. 목소리 샘플을 Chatterbox가 제로샷으로 따라 해서 나레이션을 읽습니다.
+  - 「➕ 새 목소리 만들기」: 파일 올리기, 브라우저에서 바로 녹음(안내 문장 제공), **가상 목소리**.
+  - 파일·녹음은 "본인 목소리이거나 동의를 받았습니다"를 확인해야 저장됩니다.
+  - 가상 목소리: Edge TTS 목소리의 음높이와 음색(포먼트)을 바꿔 실존 인물이 아닌 새 목소리를 만듭니다.
+  - 「▶ 미리 듣기」로 고른 목소리를 들어 볼 수 있습니다. 고른 목소리는 프리셋에도 저장됩니다.
+  - 확인한 수치: 가상 목소리 143Hz(바탕 169Hz) → 나레이션 144~150Hz, 밝은 가상 목소리 288Hz → 282Hz.
 - **AI 생성 엔진** (`gen/worker.py`, `shorts_maker/generate.py`): 생성 전용 가상환경(`.venv-gen`, [requirements-gen.txt](requirements-gen.txt))에서 별도 프로세스로 돌립니다.
   - 장면 이미지: SDXL-Turbo로 세로 이미지를 만들고 천천히 확대·이동하는 1080×1920 클립으로 바꿉니다.
   - 장면 영상: LTX-Video로 약 4초 세로 영상(512×768)을 만듭니다.
@@ -57,6 +63,9 @@
 - 받는 영상 형식에 AVI 추가.
 - 실제 브라우저(Microsoft Edge) 화면 테스트 [tests/test_ui_browser.py](tests/test_ui_browser.py): 드래그 업로드 11개 검사, 업로드부터 다운로드까지 전체 흐름. 개발용 패키지는 [requirements-dev.txt](requirements-dev.txt)(Playwright).
 - 작업 폴더를 환경 변수 `SHORTS_WORK_DIR`로 바꿀 수 있습니다 (테스트용).
+
+### Changed
+- 사이드바의 목소리 샘플 파일 올리기를 목소리 보관함으로 바꿨습니다 (`pipeline.save_voice_sample` 삭제).
 
 ### Fixed
 - **쇼츠를 만든 직후 앱 서버가 죽던 문제** (Windows `access violation`): Whisper 등 torch/CUDA를 올린 뒤 결과 표에서 pyarrow DLL을 처음 불러올 때 일어났습니다. 앱 시작 때 pyarrow를 먼저 불러옵니다. 실제 브라우저 테스트로 찾았습니다.

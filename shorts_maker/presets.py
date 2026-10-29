@@ -44,6 +44,7 @@ DEFAULTS = {
     "edge_voice": "ko-KR-SunHiNeural",
     "rate": 10,
     "exaggeration": 0.5,
+    "voice_id": "",  # 목소리 보관함의 목소리 ID (없음 = Chatterbox 기본 목소리)
     "original_gain": 0.8,
     "duck_gain": 0.2,
     "bgm_track": "",  # 배경음악 보관함의 곡 ID (없음 = "")
