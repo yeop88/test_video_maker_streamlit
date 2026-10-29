@@ -10,24 +10,26 @@ from .config import MIX_SAMPLE_RATE as SR
 from .media import load_audio
 
 
-def trim_silence(wav: np.ndarray, pad_sec: float = 0.05) -> np.ndarray:
-    """앞뒤 무음을 잘라 낸다. Chatterbox는 말이 끝난 뒤 1초 가까이 아주 작은 잡음을 남기므로,
+def speech_bounds(wav: np.ndarray, pad_sec: float = 0.05) -> tuple[int, int]:
+    """앞뒤 무음을 뺀 말소리 범위 (샘플). Chatterbox는 말이 끝난 뒤 1초 가까이 아주 작은 잡음을 남기므로,
     한 샘플이 아니라 20ms 단위 소리 크기가 가장 큰 곳의 5%를 넘는 구간만 말로 본다."""
     frame = int(0.02 * SR)
     n = len(wav) // frame
     if n == 0:
-        return wav[:0]
+        return 0, 0
     rms = np.sqrt((wav[: n * frame].reshape(n, frame) ** 2).mean(axis=1))
     loud = np.flatnonzero(rms > max(0.003, 0.05 * float(rms.max())))
     if loud.size == 0:
-        return wav[:0]
+        return 0, 0
     pad = int(pad_sec * SR)
-    return wav[max(0, loud[0] * frame - pad) : (loud[-1] + 1) * frame + pad]
+    return max(0, loud[0] * frame - pad), min(len(wav), (loud[-1] + 1) * frame + pad)
 
 
-def load_speech(path: Path) -> np.ndarray:
-    """합성한 문장 음성을 앞뒤 무음 없이 읽는다."""
-    return trim_silence(load_audio(path, SR, 1)[:, 0])
+def load_speech(path: Path) -> tuple[np.ndarray, float]:
+    """합성한 문장 음성을 앞뒤 무음 없이 읽는다. (음성, 앞에서 잘라 낸 초)를 돌려준다 (단어 시간 보정용)."""
+    wav = load_audio(path, SR, 1)[:, 0]
+    a, b = speech_bounds(wav)
+    return wav[a:b], a / SR
 
 
 def place(track: np.ndarray, wav: np.ndarray, start: float) -> None:

@@ -29,6 +29,7 @@ CHOICES = {
     "engine": ["edge", "chatterbox"],
     "edge_voice": list(EDGE_VOICES.values()),
     "layout": ["blur", "crop"],
+    "subtitle_style": ["plain", "karaoke"],
 }
 
 DEFAULTS = {
@@ -46,6 +47,8 @@ DEFAULTS = {
     "font_size": 72,
     "margin_percent": 20,
     "color": "#FFFFFF",
+    "subtitle_style": "plain",
+    "highlight_color": "#FFE600",
 }
 
 # 기본 제공 프리셋 (덮어쓰거나 지울 수 없음). 빠진 값은 DEFAULTS를 따른다.
@@ -60,7 +63,7 @@ BUILTIN = {
         "original_gain": 0.6, "duck_gain": 0.15, "font_size": 76, "color": "#FFE600",
     },
     "유쾌한 리뷰": {
-        "style": "유쾌한 리뷰", "target_sec": 30, "edge_voice": "ko-KR-HyunsuMultilingualNeural", "rate": 15,
+        "style": "유쾌한 리뷰", "subtitle_style": "karaoke", "highlight_color": "#FFE600", "target_sec": 30, "edge_voice": "ko-KR-HyunsuMultilingualNeural", "rate": 15,
         "duck_gain": 0.25, "layout": "crop", "font_size": 80, "margin_percent": 25, "color": "#00E5FF",
     },
 }
@@ -112,7 +115,7 @@ def sanitize(values: dict) -> tuple[dict, list[str]]:
                 if value not in CHOICES[key]:
                     raise ValueError
                 clean[key] = value
-            elif key == "color":
+            elif key in ("color", "highlight_color"):
                 if not COLOR.match(str(value)):
                     raise ValueError
                 clean[key] = str(value).upper()

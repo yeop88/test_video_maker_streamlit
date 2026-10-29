@@ -78,6 +78,12 @@ class NarrationSet(BaseModel):
     lines: list[NarrationLine]
 
 
+def tidy(text: str) -> str:
+    """LLM 글 다듬기: 한자·가나 제거, '5 시에'·'18 도'처럼 숫자와 단위 사이 띄어쓰기 붙이기."""
+    text = FOREIGN_SCRIPT.sub("", text)
+    return re.sub(r"(\d)\s+(?=[가-힣])", r"\1", text).strip()
+
+
 def list_models() -> list[str]:
     return sorted(m.model for m in ollama.list().models)
 
@@ -148,6 +154,10 @@ def select_clips(model: str, timeline: str, duration: float, target_sec: float, 
             problems.append(f"구간 길이 합계가 {total:.0f}초({lengths})로 목표 {target_sec:.0f}초보다 너무 짧습니다. 구간을 늘리거나 추가하세요.")
         elif total > 1.3 * target_sec:
             problems.append(f"구간 길이 합계가 {total:.0f}초({lengths})로 목표 {target_sec:.0f}초보다 너무 깁니다. 구간을 줄이거나 빼세요.")
+        # 긴 구간 하나에 항목 여러 개가 들어가면 나레이션이 다른 화면의 항목을 말하기 쉬워서 나누게 한다
+        too_long = [f"{c.start:.1f}~{c.end:.1f}초" for c in sel.clips if c.end - c.start > 15.5]
+        if too_long:
+            problems.append(f"구간 {', '.join(too_long)}이(가) 15초보다 깁니다. 항목·장면별로 나누세요.")
         # 목록형 영상에서 "첫째, 셋째"처럼 항목을 빠뜨리는 일이 있어서 핵심 내용을 먼저 적게 하고 확인한다
         covered = {i for c in sel.clips for i in c.covers}
         missing = [f"{i}번 '{p}'" for i, p in enumerate(sel.key_points) if i not in covered]
@@ -162,7 +172,7 @@ def select_clips(model: str, timeline: str, duration: float, target_sec: float, 
     sel = _ask_until_ok(model, messages, Selection, check, attempts)
     if sel is None or not sel.clips:
         raise RuntimeError("쇼츠 구간을 고르지 못했습니다. 다른 모델을 고르거나 다시 시도하세요.")
-    sel.title = FOREIGN_SCRIPT.sub("", sel.title).strip()
+    sel.title = tidy(sel.title)
     return sel
 
 
@@ -199,6 +209,13 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
             if invented:
                 nums = ", ".join(str(n) for n in sorted(invented))
                 problems.append(f"id {item['id']}의 숫자 {nums}는 그 구간 excerpt에 없습니다. 지어내지 마세요.")
+            # "둘째, 스마트폰…"을 셋째 팁 화면에 쓰는 일이 있었다. 구간 excerpt에 번호가 있으면 그 번호만 쓰게 한다
+            shown = excerpt_ordinals(item["excerpt"])
+            wrong = sorted(ordinals(text) - shown) if shown else []
+            if wrong:
+                names = ", ".join(f"{n}번째" for n in wrong)
+                problems.append(f"id {item['id']}의 '{names}' 항목은 이 구간 화면·대사에 없습니다 "
+                                f"(이 구간: {', '.join(f'{n}번째' for n in sorted(shown))}). 그 항목이 나오는 구간에 쓰세요.")
         # "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서 표현이 건너뛰면 그 항목이 빠진 것
         orders = sorted({n for i in sorted(got) for n in ordinals(got[i])})
         skipped = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]
@@ -208,7 +225,7 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
         return problems
 
     result = _ask_until_ok(model, messages, NarrationSet, check, attempts)
-    got = {ln.id: FOREIGN_SCRIPT.sub("", ln.narration).strip() for ln in result.lines} if result else {}
+    got = {ln.id: tidy(ln.narration) for ln in result.lines} if result else {}
     return [got.get(i, "") for i in range(len(items))]
 
 
@@ -224,6 +241,17 @@ def ordinals(text: str) -> set[int]:
     found = {ORDINAL_WORDS[next(g for g in m.groups() if g)] for m in ORDINAL.finditer(text)}
     if found and FIRST_WORDS.search(text):
         found.add(1)
+    return found
+
+
+EXCERPT_ORDINAL = re.compile(r"\b(?:tip|step|part|no\.?|#)\s*(\d{1,2})\b", re.I)
+ENGLISH_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
+
+
+def excerpt_ordinals(text: str) -> set[int]:
+    """구간 원본(화면 글자·대사)에 나오는 항목 번호: 'TIP 2', 'Second,', '두 번째' 등."""
+    found = ordinals(text) | {int(m.group(1)) for m in EXCERPT_ORDINAL.finditer(text)}
+    found |= {n for word, n in ENGLISH_ORDINALS.items() if re.search(rf"\b{word}\b", text, re.I)}
     return found
 
 

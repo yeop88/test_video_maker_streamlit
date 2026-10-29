@@ -76,14 +76,15 @@ def extract_frame(src: Path, t: float, dst: Path, width: int) -> None:
     run_ffmpeg(["-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "3", str(dst)])
 
 
-def cut_and_concat(src: Path, clips: list[tuple[float, float]], dst: Path) -> None:
-    """원본에서 여러 구간을 잘라 순서대로 이어 붙인 영상(소리 없음)을 만든다."""
+def cut_and_concat(src: Path, clips: list[tuple[float, float]], dst: Path, hold_sec: float = 0.0) -> None:
+    """원본에서 여러 구간을 잘라 순서대로 이어 붙인 영상(소리 없음)을 만든다. hold_sec만큼 마지막 화면을 멈춰 늘린다."""
     parts = [
         f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v{i}]"
         for i, (a, b) in enumerate(clips)
     ]
     inputs = "".join(f"[v{i}]" for i in range(len(clips)))
-    graph = ";".join(parts) + f";{inputs}concat=n={len(clips)}:v=1:a=0[out]"
+    hold = f",tpad=stop_mode=clone:stop_duration={hold_sec:.3f}" if hold_sec > 0 else ""
+    graph = ";".join(parts) + f";{inputs}concat=n={len(clips)}:v=1:a=0{hold}[out]"
     run_ffmpeg([
         "-i", str(src), "-filter_complex", graph, "-map", "[out]", "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", str(dst),

@@ -21,6 +21,7 @@ from . import config, llm, media, mixing, subtitles
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
+MAX_HOLD_SEC = 4.0  # 나레이션이 원본 끝을 넘을 때 마지막 화면을 멈춰 늘리는 최대 길이
 TAIL_SEC = 0.4  # 나레이션이 끝나고 다음 구간으로 넘어가기까지 쉼
 MIN_CLIP_SEC = 1.5
 
@@ -273,6 +274,8 @@ def make_short(
     color: str,
     on_progress: Progress = _no_progress,
     out_dir: Path | None = None,
+    subtitle_style: str = "plain",
+    highlight_color: str = "#FFE600",
 ) -> tuple[Path, list[dict]]:
     """out_dir에 결과를 저장한다 (기본은 job.dir). 다시 분석해도 지워지지 않게 작업 폴더의 results/를 쓴다."""
     if not clips:
@@ -282,14 +285,19 @@ def make_short(
     sentences = [split_sentences(c["narration"]) for c in clips]
     total_sentences = sum(len(s) for s in sentences)
     voices: list[list[np.ndarray]] = []
+    timings: list[list[tuple[list | None, float]]] = []  # 문장마다 (엔진이 준 단어 시간, 앞에서 잘라 낸 초)
     done = 0
     for group in sentences:
-        wavs = []
+        wavs, times = [], []
         for text in group:
-            wavs.append(mixing.load_speech(engine.synthesize_cached(text, job.dir / "tts")))
+            path = engine.synthesize_cached(text, job.dir / "tts")
+            wav, lead = mixing.load_speech(path)
+            wavs.append(wav)
+            times.append((engine.word_timings(path), lead))
             done += 1
             on_progress(done, total_sentences)
         voices.append(wavs)
+        timings.append(times)
     speech_sec = [
         sum(len(w) for w in wavs) / SR + config.NARRATION_GAP * max(0, len(wavs) - 1) for wavs in voices
     ]
@@ -299,21 +307,26 @@ def make_short(
     total = sum(b - a for a, b in spans)
 
     # 3) 나레이션을 배치한다. 앞 나레이션이 길어 넘치면 다음 나레이션은 그 뒤에 이어서 나온다.
-    narration = np.zeros(int(total * SR) + 1, np.float32)
+    # 마지막 나레이션이 원본 끝을 넘으면 마지막 화면을 멈춘 채로 최대 MAX_HOLD_SEC 늘린다 (나레이션을 자르지 않게)
+    narration = np.zeros(int((total + MAX_HOLD_SEC) * SR) + 1, np.float32)
     rows, report = [], []
     offset, cursor = 0.0, 0.0
-    for clip, (a, b), group, wavs, sec in zip(clips, spans, sentences, voices, speech_sec):
+    for clip, (a, b), group, wavs, times, sec in zip(clips, spans, sentences, voices, timings, speech_sec):
         cursor = max(cursor, offset + LEAD_SEC)
         first = cursor
-        for text, wav in zip(group, wavs):
+        for text, wav, (words, lead) in zip(group, wavs, times):
             mixing.place(narration, wav, cursor)
-            rows.append({"start": cursor, "end": cursor + len(wav) / SR, "text": text})
-            cursor += len(wav) / SR + config.NARRATION_GAP
+            dur = len(wav) / SR
+            rows.append({"start": cursor, "end": cursor + dur, "text": text,
+                         "words": subtitles.word_times(text, cursor, dur, words, lead)})
+            cursor += dur + config.NARRATION_GAP
         end_sec = cursor - config.NARRATION_GAP if wavs else first
         if not wavs:
             status = "나레이션 없음"
+        elif end_sec > total + MAX_HOLD_SEC:
+            status = f"{end_sec - total - MAX_HOLD_SEC:.1f}초 잘림"
         elif end_sec > total:
-            status = f"{end_sec - total:.1f}초 잘림"
+            status = f"마지막 화면 {end_sec - total + TAIL_SEC:.1f}초 멈춤"
         elif end_sec > offset + (b - a):
             status = "다음 장면까지 이어짐"
         elif (b - a) - (clip["end"] - clip["start"]) > 0.05:
@@ -327,9 +340,14 @@ def make_short(
             "상태": status,
         })
         offset += b - a
+    hold = min(MAX_HOLD_SEC, max(0.0, max((r["end"] for r in rows), default=0.0) + TAIL_SEC - total))
+    hold = round(hold, 2) if hold > 0.05 else 0.0
+    total += hold
+    narration = narration[: int(total * SR) + 1]
     rows = [r for r in rows if r["start"] < total]
     for r in rows:
         r["end"] = min(r["end"], total)
+        r["words"] = [(a, min(b, total)) for a, b in r.get("words", []) if a < total]
 
     # 4) 원본 소리를 같은 구간으로 잘라 이어 붙이고, 나레이션이 나올 때만 줄여서 섞는다
     original = media.load_audio(job.audio, SR, 2)
@@ -340,7 +358,7 @@ def make_short(
 
     # 5) 영상 자르고 잇기 → 세로 변환 + 자막
     cut = job.dir / "cut.mp4"
-    media.cut_and_concat(job.video, spans, cut)
+    media.cut_and_concat(job.video, spans, cut, hold_sec=hold)
 
     font_file, family = subtitles.find_korean_font()
     fonts = job.dir / "fonts"
@@ -352,6 +370,7 @@ def make_short(
     subtitles.write_ass(
         cues, job.dir / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
         title=title, title_end=total,
+        highlight=highlight_color if subtitle_style == "karaoke" else None,
     )
     out_dir = out_dir or job.dir
     out_dir.mkdir(parents=True, exist_ok=True)

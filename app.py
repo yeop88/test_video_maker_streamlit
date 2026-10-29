@@ -16,6 +16,7 @@ st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="
 ENGINE_LABELS = {"edge": "Edge TTS (기본 목소리, 인터넷 필요)", "chatterbox": "Chatterbox (GPU, 목소리 샘플 사용 가능)"}
 LAYOUT_LABELS = {"blur": "블러 배경 (가로 영상·글자 많은 화면 추천)", "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)"}
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
+SUBTITLE_LABELS = {"plain": "기본", "karaoke": "단어 강조 (읽는 낱말 색칠)"}
 VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -162,6 +163,10 @@ with st.sidebar:
     st.subheader("화면 / 자막")
     st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
     st.checkbox("위쪽에 제목 표시", key="show_title")
+    st.radio("자막 스타일", presets.CHOICES["subtitle_style"], format_func=SUBTITLE_LABELS.get, key="subtitle_style",
+             help="단어 강조: 나레이션이 읽는 낱말을 다른 색으로 조금 크게 보여 줍니다.")
+    if ss.subtitle_style == "karaoke":
+        st.color_picker("강조 색", key="highlight_color")
     setting_slider("자막 크기", "font_size")
     setting_slider("자막 위치 (아래에서 %)", "margin_percent")
     st.color_picker("자막 색", key="color")
@@ -441,7 +446,8 @@ def settings_summary() -> str:
     else:
         voice = f"Chatterbox {'목소리 샘플' if voice_sample else '기본 목소리'}"
     layout = {"blur": "블러 배경", "crop": "가운데 크롭"}.get(ss.layout, ss.layout)
-    return f"{ss.style} · {voice} · {layout} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f}"
+    subs = "단어 강조 자막" if ss.subtitle_style == "karaoke" else "기본 자막"
+    return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f}"
 
 
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
@@ -460,6 +466,7 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
                 ss.layout, font_size, margin_percent, color,
                 on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 문장"),
                 out_dir=proj.dir / "results",
+                subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
             )
             proj.results.insert(0, {
                 "id": project.new_id(), "short_id": short["id"], "title": title,

@@ -16,7 +16,7 @@ import soundfile as sf
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from shorts_maker import asr, config, llm, media, pipeline, tts
+from shorts_maker import asr, config, llm, media, pipeline, subtitles, tts
 from shorts_maker.korean_numbers import number_values
 import edge_tts
 
@@ -30,7 +30,7 @@ def log(msg): print(f"[{time.time()-T0:6.1f}s] {msg}", flush=True)
 TESTS = [
     dict(
         name="T1_korean_lake_vlog",
-        size=(1280, 720), bgm=0.08, target=30, style="감성 스토리", engine="edge", layout="blur",
+        size=(1280, 720), bgm=0.08, target=30, style="감성 스토리", engine="edge", layout="blur", subtitles="karaoke",
         # (장면 이미지, 화면 글자, [(목소리, 대사)])
         scenes=[
             (WALL / "ThemeC/img28.jpg", "", [("ko-KR-SunHiNeural", "안녕하세요."),
@@ -76,7 +76,7 @@ TESTS = [
     ),
     dict(
         name="T3_silent_abstract_art_voice_sample",
-        size=(1080, 1080), bgm=0.12, target=20, style="감성 스토리", engine="chatterbox_sample", layout="blur",
+        size=(1080, 1080), bgm=0.12, target=20, style="감성 스토리", engine="chatterbox_sample", layout="blur", subtitles="karaoke",
         # 대사 없는 장면: (None, 길이 초)
         scenes=[(WALL / p, "", [(None, 6.0)]) for p in
                 ["ThemeB/img24.jpg", "ThemeB/img25.jpg", "ThemeB/img26.jpg", "ThemeB/img27.jpg",
@@ -153,6 +153,10 @@ def make_video(t, folder):
     media.run_ffmpeg(["-f", "concat", "-safe", "0", "-i", "list.txt", "-i", "audio.wav", "-map", "0:v", "-map", "1:a",
                       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", video.name], cwd=folder)
     return video, lines, scenes
+
+
+def split_sentences_all(clips):
+    return [sent for c in clips for sent in pipeline.split_sentences(c["narration"])]
 
 
 def ass_cues(path):
@@ -241,7 +245,8 @@ for t in TESTS:
                 "ko-KR-InJoonNeural").save(str(sample)))
             reference = pipeline.save_voice_sample(sample.name, sample.read_bytes())
         engine = tts.ChatterboxEngine(chatterbox, reference, 0.5)
-    out, report = pipeline.make_short(job, title, clips, engine, 0.8, 0.2, t["layout"], 72, 20, "#FFFFFF")
+    out, report = pipeline.make_short(job, title, clips, engine, 0.8, 0.2, t["layout"], 72, 20, "#FFFFFF",
+                                      subtitle_style=t.get("subtitles", "plain"), highlight_color="#FFE600")
     timings["make_short"] = round(time.time() - t2, 1)
 
     oi = media.probe(out)
@@ -266,7 +271,13 @@ for t in TESTS:
     scale = float(np.dot(mixed, narr) / max(1e-9, np.dot(narr, narr)))
     rest = mixed - scale * narr
     mask = np.zeros(n, bool)
-    for a, b, _ in cues:
+    spans = []  # 단어 강조 자막은 낱말마다 이벤트라 이어진 이벤트를 하나로 합쳐서 본다
+    for a, b, _ in sorted(cues):
+        if spans and a <= spans[-1][1] + 0.05:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    for a, b in spans:
         mask[int((a + 0.2) * SR): int((b - 0.2) * SR)] = True  # 소리 크기가 바뀌는 앞뒤 0.2초는 제외
     rms = lambda x: float(np.sqrt(np.mean(x ** 2))) if x.size else 0.0
     r["duck_amplitude_ratio"] = round(rms(rest[mask]) / max(1e-9, rms(rest[~mask])), 3) if (~mask).sum() > SR else None
@@ -295,6 +306,13 @@ for t in TESTS:
         "subs_within_video": bool(cues) and cues[-1][1] <= oi.duration + 0.05,
         "no_narration_cut": r["narration_cut"] == 0,
     }
+    if t.get("subtitles") == "karaoke":
+        # 단어 강조: 낱말마다 이벤트 하나, 시간 순서대로, 강조된 낱말 수 = 나레이션 낱말 수
+        events = [c for c in cues if r"\c&H" in c[2]]
+        r["karaoke_events"] = len(events)
+        r["karaoke_tokens"] = sum(len(subtitles.clean_text(txt).split()) for txt in split_sentences_all(clips))
+        checks["karaoke_one_event_per_word"] = len(events) == r["karaoke_tokens"]
+        checks["karaoke_in_order"] = all(a[0] <= b[0] for a, b in zip(events, events[1:]))
     if t["name"].startswith("T3"):
         checks["ducking(ratio<0.35)"] = r["duck_amplitude_ratio"] is not None and r["duck_amplitude_ratio"] < 0.35
         checks["no_speech_in_silent_video"] = r["speech_segments"] == 0

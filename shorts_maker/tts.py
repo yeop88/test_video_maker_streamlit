@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -36,8 +37,17 @@ class _CachedEngine:
         if not path.exists():
             tmp = path.with_name(f"tmp_{path.name}")
             self.synthesize(text, tmp)
+            words = tmp.with_suffix(".words.json")
+            if words.exists():
+                words.replace(path.with_suffix(".words.json"))
             tmp.replace(path)
         return path
+
+    @staticmethod
+    def word_timings(path: Path) -> list[dict] | None:
+        """단어별 시간 [{start, end, text}] (음성 파일 기준 초). 엔진이 알려 주지 않으면 None."""
+        side = path.with_suffix(".words.json")
+        return json.loads(side.read_text(encoding="utf-8")) if side.exists() else None
 
 
 class EdgeTTSEngine(_CachedEngine):
@@ -50,12 +60,25 @@ class EdgeTTSEngine(_CachedEngine):
         self.rate = f"{rate_percent:+d}%"
 
     def cache_key(self) -> str:
-        return f"edge|{self.voice}|{self.rate}"
+        return f"edge2|{self.voice}|{self.rate}"  # edge2: 단어 시간(.words.json)을 함께 저장하는 형식
 
     def synthesize(self, text: str, out_path: Path) -> None:
         import edge_tts
 
-        asyncio.run(edge_tts.Communicate(text, self.voice, rate=self.rate).save(str(out_path)))
+        async def run() -> list[dict]:
+            words = []
+            communicate = edge_tts.Communicate(text, self.voice, rate=self.rate, boundary="WordBoundary")
+            with open(out_path, "wb") as f:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        f.write(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":  # 시간 단위는 100나노초
+                        start = chunk["offset"] / 1e7
+                        words.append({"start": start, "end": start + chunk["duration"] / 1e7, "text": chunk["text"]})
+            return words
+
+        words = asyncio.run(run())
+        out_path.with_suffix(".words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
 
 
 def load_chatterbox():
