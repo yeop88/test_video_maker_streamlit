@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-import pandas as pd
 import soundfile as sf
 
 from . import config, llm, media, mixing, subtitles
@@ -132,7 +131,8 @@ def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list
     붙이는 일이 있어서, 나레이션은 구간마다 그 시간의 장면·대사만 보여 주고 쓰게 한다.
     """
     selection = llm.select_clips(model, timeline(job), job.duration, target_sec)
-    clips = normalize_clips(job, [{"start": c.start, "end": c.end, "narration": ""} for c in selection.clips])
+    chosen = sorted(selection.clips, key=lambda c: c.start)
+    clips = normalize_clips(job, [{"start": c.start, "end": c.end, "narration": ""} for c in chosen])
     # 다시 요청해도 길이가 크게 틀리면 코드로 맞춘다
     total = sum(c["end"] - c["start"] for c in clips)
     if total > 1.3 * target_sec:  # 구간 끝을 같은 비율로 줄인다
@@ -162,8 +162,25 @@ def narrate(job: Job, clips: list[dict], model: str, style: str) -> list[dict]:
     return [{**c, "narration": t} for c, t in zip(clips, texts)]
 
 
+def _sentence_spans(job: Job) -> list[tuple[float, float]]:
+    """Whisper 구간을 문장 단위로 다시 묶는다. Whisper는 실행마다 "공기가 정말 맑고,"처럼 쉼표에서
+    구간을 나누기도 해서, 그 끝에 맞추면 문장 중간에서 끊겼다. 문장 끝 부호로 끝나지 않고 바로 다음 구간이
+    이어지면(0.6초 이내) 한 문장으로 본다."""
+    from .asr import SENTENCE_END
+
+    spans: list[list[float]] = []
+    open_sentence = False
+    for seg in job.segments:
+        if spans and open_sentence and seg["start"] - spans[-1][1] <= 0.6:
+            spans[-1][1] = seg["end"]
+        else:
+            spans.append([seg["start"], seg["end"]])
+        open_sentence = not seg["text"].strip().endswith(SENTENCE_END)
+    return [tuple(s) for s in spans]
+
+
 def _speech_spans(job: Job) -> list[tuple[float, float]]:
-    return [(s["start"], s["end"]) for s in job.segments] + list(job.voices)
+    return _sentence_spans(job) + list(job.voices)
 
 
 def _safe_cut(job: Job, t: float, low: float, high: float, prefer_later: bool) -> float:
@@ -183,7 +200,10 @@ def _safe_cut(job: Job, t: float, low: float, high: float, prefer_later: bool) -
 
 
 def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
-    """영상 범위 안으로 맞추고, 원본 대사 중간에서 끊기지 않게 경계를 옮기고, 겹치면 합친다."""
+    """영상 범위 안으로 맞추고, 원본 대사 중간에서 끊기지 않게 경계를 옮기고, 바로 앞 구간과 겹치면 합친다.
+
+    순서는 그대로 둔다 (사용자가 카드 순서를 바꿀 수 있음). 시간 순 정렬은 AI 구성(plan)에서만 한다.
+    """
     fixed = []
     for clip in clips:
         a = min(max(0.0, float(clip["start"])), job.duration)
@@ -196,40 +216,17 @@ def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
             if lo < b < hi and hi - b <= 3.0:
                 b = min(job.duration, hi + 0.15)
         if b - a >= MIN_CLIP_SEC:
-            fixed.append({"start": round(a, 2), "end": round(b, 2), "narration": clip["narration"]})
-    fixed.sort(key=lambda c: c["start"])
+            fixed.append({**clip, "start": round(a, 2), "end": round(b, 2)})
 
     merged: list[dict] = []
     for clip in fixed:
-        if merged and clip["start"] < merged[-1]["end"]:
+        if merged and merged[-1]["start"] <= clip["start"] < merged[-1]["end"]:
             prev = merged[-1]
             prev["end"] = max(prev["end"], clip["end"])
             prev["narration"] = f"{prev['narration']} {clip['narration']}".strip()
         else:
             merged.append(clip)
     return merged
-
-
-def plan_dataframe(clips: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame([
-        {
-            "start": c["start"],
-            "end": c["end"],
-            "narration": c["narration"],
-            "max_chars": int((c["end"] - c["start"]) * config.NARRATION_CHARS_PER_SECOND),
-        }
-        for c in clips
-    ])
-
-
-def plan_from_dataframe(job: Job, df: pd.DataFrame) -> list[dict]:
-    clips = []
-    for rec in df.to_dict("records"):
-        if pd.isna(rec.get("start")) or pd.isna(rec.get("end")):
-            continue
-        narration = "" if pd.isna(rec.get("narration")) else str(rec["narration"]).strip()
-        clips.append({"start": float(rec["start"]), "end": float(rec["end"]), "narration": narration})
-    return normalize_clips(job, clips)
 
 
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
@@ -250,8 +247,10 @@ def fit_clips(job: Job, clips: list[dict], speech_sec: list[float]) -> list[tupl
         a, b = clip["start"], clip["end"]
         start_at = max(LEAD_SEC, overflow - TAIL_SEC + config.NARRATION_GAP) if overflow > 0 else LEAD_SEC
         need = start_at + speech + TAIL_SEC if speech > 0 else overflow
-        limit = clips[i + 1]["start"] if i + 1 < len(clips) else job.duration
-        floor = spans[-1][1] if spans else 0.0
+        # 다음·앞 구간이 시간상으로도 뒤·앞에 있을 때만 그 경계를 넘지 않게 한다 (카드 순서를 바꾼 경우 대비)
+        nxt = clips[i + 1]["start"] if i + 1 < len(clips) else job.duration
+        limit = nxt if nxt > a else job.duration
+        floor = spans[-1][1] if spans and spans[-1][1] <= a else 0.0
         if b - a < need:  # 늘린 끝이 원본 대사 중간이면 대사가 끝나는 곳까지 (안 되면 시작 전까지)
             b = _safe_cut(job, min(limit, a + need), a + MIN_CLIP_SEC, limit, prefer_later=True)
         if b - a < need:

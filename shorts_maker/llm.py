@@ -43,6 +43,7 @@ NARRATE_PROMPT = """당신은 쇼츠 나레이션 작가입니다. 쇼츠는 아
 규칙:
 - 각 구간의 나레이션은 반드시 그 구간의 excerpt(그 시간의 화면 설명과 대사)에 나온 내용만 다루세요.
   다른 구간의 내용을 미리 말하거나 뒤늦게 말하면 화면과 맞지 않습니다.
+- excerpt에 팁·단계·항목이 여러 개 나오면(화면 글자 "TIP 1", "TIP 2"나 대사) 하나도 빠뜨리지 말고 모두 짧게 담으세요.
 - max_chars(공백 포함 글자 수)를 넘지 마세요.
 - 첫 구간은 시청자를 붙잡는 한 문장으로 시작하고, 마지막 구간은 짧게 마무리하세요.
 - 구간이 이어지는 하나의 이야기처럼 자연스럽게 연결하세요.
@@ -215,9 +216,15 @@ ORDINAL_WORDS = {"첫": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "�
 ORDINAL = re.compile(r"(첫|둘|셋|넷|다섯|여섯|일곱)째|(첫|두|세|네|다섯|여섯|일곱)\s?번째|(첫)\s?(?:번째|단계|팁)")
 
 
+FIRST_WORDS = re.compile(r"(?<![가-힣])(먼저|우선|처음으로)(?=[,\s])")  # "먼저 … 두 번째로 …"의 "먼저"는 첫 번째
+
+
 def ordinals(text: str) -> set[int]:
-    """'첫째', '두 번째', '세번째' 같은 순서 표현의 번호."""
-    return {ORDINAL_WORDS[next(g for g in m.groups() if g)] for m in ORDINAL.finditer(text)}
+    """'첫째', '두 번째', '세번째' 같은 순서 표현의 번호. 두 번째 이상이 있을 때는 '먼저'도 첫 번째로 센다."""
+    found = {ORDINAL_WORDS[next(g for g in m.groups() if g)] for m in ORDINAL.finditer(text)}
+    if found and FIRST_WORDS.search(text):
+        found.add(1)
+    return found
 
 
 def timeline_text(frames: list[dict], segments: list[dict], start: float = 0.0, end: float = float("inf")) -> str:

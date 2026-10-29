@@ -2,6 +2,9 @@
 import hashlib
 from pathlib import Path
 
+# pyarrow는 맨 먼저 불러온다. Whisper·Chatterbox(torch/CUDA) 등을 올린 뒤 처음으로 pyarrow DLL을 불러오면
+# Windows에서 서버 프로세스가 access violation으로 죽는 일이 있었다 (결과 표 st.dataframe에서 처음 불러올 때).
+import pyarrow  # noqa: F401
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -180,11 +183,18 @@ st.caption(
 )
 
 
+def refresh_cards() -> None:
+    """구간 카드 입력칸을 저장된 값으로 다시 그리게 한다 (카드 위젯 키에 붙는 번호를 바꿈)."""
+    ss.card_rev = ss.get("card_rev", 0) + 1
+
+
 def set_project(p: project.Project, message: str = "") -> None:
-    """작업을 화면 상태로 불러온다. 표 편집 상태는 새 작업 기준으로 다시 만든다."""
+    """작업을 화면 상태로 불러온다."""
     ss.project = p
-    ss.pop("editor", None)
-    ss.plan = pipeline.plan_dataframe(p.shorts[0]["clips"]) if p.shorts else None
+    for short in p.shorts:
+        for clip in short["clips"]:
+            clip.setdefault("uid", project.new_id())  # 이전 버전 작업에는 카드 ID가 없음
+    refresh_cards()
     if message:
         ss.flash = message
 
@@ -199,8 +209,6 @@ def open_recent(folder: Path) -> None:
 
 def close_project() -> None:
     ss.pop("project", None)
-    ss.pop("plan", None)
-    ss.pop("editor", None)
 
 
 recent_items = project.recent()
@@ -261,6 +269,82 @@ with col_options:
     run_analyze = st.button(label, type="primary", disabled=llm_model is None)
 
 
+def card_key(uid: str, field: str) -> str:
+    return f"card{ss.card_rev}_{uid}_{field}"
+
+
+def sync_cards(short: dict) -> None:
+    """카드 입력칸에 쓴 값을 저장된 구간에 반영한다 (버튼 콜백에서 순서를 바꾸기 전에 호출)."""
+    for clip in short["clips"]:
+        for field in ("start", "end", "narration"):
+            key = card_key(clip["uid"], field)
+            if key in ss:
+                clip[field] = ss[key]
+
+
+def card_action(p: project.Project, short: dict, uid: str, action: str) -> None:
+    sync_cards(short)
+    items = short["clips"]
+    i = next(k for k, c in enumerate(items) if c["uid"] == uid)
+    if action == "up" and i > 0:
+        items[i - 1], items[i] = items[i], items[i - 1]
+    elif action == "down" and i + 1 < len(items):
+        items[i + 1], items[i] = items[i], items[i + 1]
+    elif action == "delete":
+        items.pop(i)
+    project.save(p)
+    refresh_cards()
+
+
+def add_card(p: project.Project, short: dict, duration: float) -> None:
+    sync_cards(short)
+    start = short["clips"][-1]["end"] if short["clips"] else 0.0
+    start = min(start, max(0.0, duration - 5.0))
+    short["clips"].append({"uid": project.new_id(), "start": round(start, 1),
+                           "end": round(min(duration, start + 5.0), 1), "narration": ""})
+    project.save(p)
+    refresh_cards()
+
+
+def clip_cards(p: project.Project, short: dict, job: pipeline.Job) -> list[dict]:
+    """구간마다 카드 하나: 구간 재생, 시작·끝, 나레이션, 순서 바꾸기·삭제. 고친 값을 저장하고 구간 목록을 돌려준다."""
+    cps = config.NARRATION_CHARS_PER_SECOND
+    for i, clip in enumerate(short["clips"]):
+        uid = clip["uid"]
+        with st.container(border=True, key=f"cardbox_{uid}"):
+            col_media, col_time, col_text = st.columns([1.3, 1, 3])
+            with col_media:
+                st.video(str(job.video), start_time=float(clip["start"]), end_time=float(clip["end"]))
+            with col_time:
+                st.markdown(f"**구간 {i + 1}**")
+                start = st.number_input("시작(초)", 0.0, job.duration, float(clip["start"]), 0.1, format="%.1f",
+                                        key=card_key(uid, "start"))
+                end = st.number_input("끝(초)", 0.0, job.duration, float(clip["end"]), 0.1, format="%.1f",
+                                      key=card_key(uid, "end"))
+                b_up, b_down, b_del = st.columns(3)
+                b_up.button("⬆", key=f"up_{uid}", help="앞으로", disabled=i == 0,
+                            on_click=card_action, args=(p, short, uid, "up"))
+                b_down.button("⬇", key=f"down_{uid}", help="뒤로", disabled=i + 1 == len(short["clips"]),
+                              on_click=card_action, args=(p, short, uid, "down"))
+                b_del.button("🗑", key=f"del_{uid}", help="이 구간 빼기", on_click=card_action, args=(p, short, uid, "delete"))
+            with col_text:
+                narration = st.text_area("나레이션 (자막)", clip["narration"], height=130, key=card_key(uid, "narration"))
+                limit = int(max(0.0, end - start) * cps)
+                note = f"{len(narration)}자 / 권장 {limit}자 ({end - start:.1f}초)"
+                if end <= start:
+                    st.caption(f"⚠️ 끝이 시작보다 앞입니다. 이 구간은 빠집니다. · {note}")
+                elif len(narration) > limit * 1.2:
+                    st.caption(f"⚠️ {note} — 길면 구간이 자동으로 늘어납니다")
+                else:
+                    st.caption(note)
+        if (start, end, narration) != (clip["start"], clip["end"], clip["narration"]):
+            clip.update(start=start, end=end, narration=narration)  # 고친 값을 바로 저장 (새로고침해도 남음)
+            project.save(p)
+    st.button("➕ 구간 추가", on_click=add_card, args=(p, short, job.duration),
+              help="마지막 구간 뒤 5초를 새 카드로 추가합니다. 시간을 고쳐 원하는 장면을 고르세요.")
+    return [c for c in short["clips"] if c["end"] > c["start"]]
+
+
 def make_plan(p: project.Project) -> None:
     title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label])
     if not clips:
@@ -306,8 +390,9 @@ with st.expander(f"🔎 AI가 이해한 내용 (장면 {len(job.frames)}개, 대
 st.divider()
 st.subheader("2단계 · 쇼츠 구성과 나레이션 확인")
 st.caption(
-    "AI가 고른 원본 구간과 구간별 나레이션입니다. 시간과 대본을 고치거나, 행을 추가·삭제할 수 있습니다. "
-    "나레이션이 구간보다 길면 구간을 자동으로 늘립니다. **권장 글자 수**는 구간 길이 기준입니다. 고친 내용은 바로 저장됩니다."
+    "AI가 고른 원본 구간과 구간별 나레이션입니다. 카드에서 구간을 재생해 보고 시간과 나레이션을 고치거나, "
+    "순서를 바꾸고 구간을 추가·삭제할 수 있습니다. 나레이션이 구간보다 길면 쇼츠를 만들 때 구간을 자동으로 늘립니다. "
+    "고친 내용은 바로 저장됩니다."
 )
 if not proj.shorts:
     if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
@@ -316,8 +401,6 @@ if not proj.shorts:
         st.rerun()
     st.stop()
 short = proj.shorts[0]
-if ss.get("plan") is None:
-    ss.plan = pipeline.plan_dataframe(short["clips"])
 
 col_title, col_replan = st.columns([3, 1])
 with col_title:
@@ -329,34 +412,24 @@ with col_replan:
             make_plan(proj)
         st.rerun()
 
-edited = st.data_editor(
-    ss.plan,
-    column_config={
-        "start": st.column_config.NumberColumn("시작(초)", step=0.1, format="%.1f", width="small", min_value=0.0),
-        "end": st.column_config.NumberColumn("끝(초)", step=0.1, format="%.1f", width="small", min_value=0.0),
-        "narration": st.column_config.TextColumn("나레이션 (자막)", width="large"),
-        "max_chars": st.column_config.NumberColumn("권장 글자 수", disabled=True, width="small"),
-    },
-    hide_index=True,
-    num_rows="dynamic",
-    width="stretch",
-    key="editor",
-)
-clips = pipeline.plan_from_dataframe(job, edited)
-if clips != short["clips"] or title != short["title"]:  # 고친 내용을 바로 저장 (새로고침해도 남음)
-    short.update(clips=clips, title=title)
+raw_clips = clip_cards(proj, short, job)
+clips = pipeline.normalize_clips(job, raw_clips)  # 쇼츠를 만들 때 쓰는 구간 (범위 맞춤, 대사 경계, 겹침 합치기)
+if title != short["title"]:
+    short["title"] = title
     project.save(proj)
 
 col_info, col_renarrate = st.columns([3, 1])
 with col_info:
     st.caption(f"구간 {len(clips)}개 · 원본 구간 합계 {sum(c['end'] - c['start'] for c in clips):.1f}초")
+    if len(clips) < len([c for c in raw_clips if c["end"] > c["start"]]):
+        st.caption("⚠️ 겹치는 구간은 쇼츠를 만들 때 하나로 합쳐집니다.")
 with col_renarrate:
     if st.button(
         "✍️ 나레이션만 다시 쓰기", disabled=not clips or llm_model is None,
-        help="표의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
+        help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
     ):
         with st.spinner("나레이션을 쓰는 중..."):
-            short["clips"] = pipeline.narrate(job, clips, llm_model, llm.STYLES[style_label])
+            short["clips"] = pipeline.narrate(job, raw_clips, llm_model, llm.STYLES[style_label])
             project.save(proj)
             set_project(proj)
         st.rerun()
