@@ -185,7 +185,7 @@ def test_full_flow(page, lake: Path, out: Path):
     t = time.time()
     page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
     try:
-        page.get_by_role("button", name="⬇️ 쇼츠 다운로드").wait_for(timeout=300000)
+        page.get_by_role("button", name="⬇️ 다운로드").wait_for(timeout=300000)
     except Exception:
         page.screenshot(path=str(out / "step3_fail.png"), full_page=True)
         errors = [ln for ln in page.inner_text('[data-testid="stMain"]').splitlines() if "Error" in ln or "실패" in ln]
@@ -193,13 +193,32 @@ def test_full_flow(page, lake: Path, out: Path):
         raise
     check("3단계 → 결과", page.locator("video").count() >= 2, f"{time.time() - t:.0f}초")
     with page.expect_download() as dl:
-        page.get_by_role("button", name="⬇️ 쇼츠 다운로드").click()
+        page.get_by_role("button", name="⬇️ 다운로드").click()
     path = out / dl.value.suggested_filename
     dl.value.save_as(path)
     info = media.probe(path)
     check("다운로드한 쇼츠 1080x1920", (info.width, info.height) == (1080, 1920) and info.has_audio,
           f"{info.width}x{info.height} {info.duration:.1f}초")
     page.screenshot(path=str(out / "result.png"), full_page=True)
+    test_results_history(page)
+
+
+def test_results_history(page):
+    """결과 기록: 설정을 바꿔 한 번 더 만들면 나란히 쌓이고, 지울 수 있다."""
+    results = page.locator('[class*="st-key-result_"]')
+    check("결과 기록 1개", results.count() == 1, results.count())
+    page.locator('[data-testid="stSidebar"]').get_by_role("combobox", name="목소리", exact=True).click()
+    page.get_by_role("option", name="인준 (남성)").click()
+    page.wait_for_timeout(1000)
+    page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+    page.wait_for_function("document.querySelectorAll('[class*=\"st-key-result_\"]').length === 2", timeout=300000)
+    page.wait_for_timeout(1500)
+    texts = [r.inner_text() for r in results.all()]
+    check("다시 만들면 결과 2개 (최신이 앞)", results.count() == 2 and "🆕" in texts[0], [t[:20] for t in texts])
+    check("설정 요약으로 차이가 보임", "인준" in texts[0] and "선희" in texts[1], [t.splitlines()[-4:] for t in texts])
+    results.nth(1).get_by_role("button", name="🗑").click()
+    page.wait_for_timeout(2000)
+    check("결과 지우기", results.count() == 1 and "인준" in results.first.inner_text())
 
 
 def test_restore(page):
@@ -220,7 +239,7 @@ def test_restore(page):
     check("고친 제목 유지", page.get_by_label("제목 (화면 위쪽)").input_value() == "새로고침 확인용 제목",
           page.get_by_label("제목 (화면 위쪽)").input_value())
     check("카드 순서·나레이션 유지", card_texts(page) == before, card_texts(page))
-    check("만든 쇼츠 유지", page.get_by_role("button", name="⬇️ 쇼츠 다운로드").count() == 1)
+    check("만든 쇼츠 유지", page.get_by_role("button", name="⬇️ 다운로드").count() == 1)
 
 
 def main():

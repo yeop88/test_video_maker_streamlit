@@ -434,6 +434,16 @@ with col_renarrate:
             set_project(proj)
         st.rerun()
 
+def settings_summary() -> str:
+    """결과 기록에 남길 설정 한 줄 요약 (나란히 비교할 때 무엇이 달랐는지 보이게)."""
+    if ss.engine == "edge":
+        voice = f"{VOICE_LABELS.get(ss.edge_voice, ss.edge_voice)} {ss.rate:+d}%"
+    else:
+        voice = f"Chatterbox {'목소리 샘플' if voice_sample else '기본 목소리'}"
+    layout = {"blur": "블러 배경", "crop": "가운데 크롭"}.get(ss.layout, ss.layout)
+    return f"{ss.style} · {voice} · {layout} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f}"
+
+
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
 if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips):
     with st.status("쇼츠를 만드는 중...", expanded=True) as status:
@@ -454,6 +464,7 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
             proj.results.insert(0, {
                 "id": project.new_id(), "short_id": short["id"], "title": title,
                 "video": str(video), "report": report, "created": project.now(),
+                "duration": round(media.probe(video).duration, 1), "summary": settings_summary(),
             })
             project.save(proj)
             status.update(label="완성!", state="complete", expanded=False)
@@ -461,23 +472,41 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
             status.update(label="만들기 실패", state="error")
             st.exception(e)
 
-# ───────────────────────── 결과 ─────────────────────────
+# ───────────────────────── 결과 기록 ─────────────────────────
+def delete_result(p: project.Project, result_id: str) -> None:
+    for r in [r for r in p.results if r["id"] == result_id]:
+        Path(r["video"]).unlink(missing_ok=True)
+        p.results.remove(r)
+    project.save(p)
+    ss.flash = "결과를 지웠습니다."
+
+
+RESULTS_PER_ROW = 3
 if proj.results:
-    result = proj.results[0]
     st.divider()
-    st.subheader("결과")
-    col_out, col_report = st.columns([1, 2])
-    with col_out:
-        st.video(result["video"])
-        st.download_button(
-            "⬇️ 쇼츠 다운로드", data=Path(result["video"]).read_bytes(),
-            file_name=f"{Path(proj.name).stem}_shorts.mp4", mime="video/mp4", type="primary",
-        )
-    with col_report:
-        report = result["report"]
-        st.caption(f"{result['created']} 만듦")
-        st.dataframe(report, hide_index=True, width="stretch")
-        if any("잘림" in r["상태"] or "이어짐" in r["상태"] for r in report):
-            st.warning("나레이션이 구간보다 길어서 다음 장면으로 넘어가거나 잘린 곳이 있습니다. 2단계에서 대본을 줄이거나 구간을 늘려 보세요.")
-        else:
-            st.success("모든 나레이션이 자기 장면 안에 들어갔습니다.")
+    st.subheader(f"결과 기록 ({len(proj.results)}개)")
+    st.caption("만든 쇼츠가 최신 순으로 쌓입니다. 말투·목소리·화면 설정을 바꿔 가며 만들어 나란히 비교해 보세요.")
+    latest = proj.results[0]["report"]
+    if any("잘림" in r["상태"] or "이어짐" in r["상태"] for r in latest):
+        st.warning("가장 최근 결과에서 나레이션이 구간보다 길어 다음 장면으로 넘어가거나 잘린 곳이 있습니다. 2단계에서 나레이션을 줄이거나 구간을 늘려 보세요.")
+    for row_start in range(0, len(proj.results), RESULTS_PER_ROW):
+        cols = st.columns(RESULTS_PER_ROW)
+        for col, result in zip(cols, proj.results[row_start:row_start + RESULTS_PER_ROW]):
+            with col, st.container(border=True, key=f"result_{result['id']}"):
+                badge = "🆕 " if result is proj.results[0] else ""
+                st.markdown(f"**{badge}{result['title'] or '(제목 없음)'}**")
+                st.video(result["video"])
+                st.caption(f"{result['created']} · {result.get('duration', '?')}초")
+                if result.get("summary"):
+                    st.caption(result["summary"])
+                stamp = result["created"].replace("-", "").replace(":", "").replace(" ", "_")
+                col_dl, col_del = st.columns([3, 1])
+                col_dl.download_button(
+                    "⬇️ 다운로드", data=Path(result["video"]).read_bytes(), key=f"dl_{result['id']}",
+                    file_name=f"{Path(proj.name).stem}_{stamp}.mp4", mime="video/mp4",
+                    type="primary" if result is proj.results[0] else "secondary", width="stretch",
+                )
+                col_del.button("🗑", key=f"delres_{result['id']}", help="이 결과 지우기",
+                               on_click=delete_result, args=(proj, result["id"]))
+                with st.expander("구간별 나레이션 길이"):
+                    st.dataframe(result["report"], hide_index=True, width="stretch")
