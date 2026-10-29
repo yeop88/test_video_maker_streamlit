@@ -4,13 +4,14 @@ from pathlib import Path
 
 import streamlit as st
 
-from shorts_maker import config, llm, media, pipeline, tts
+import shorts_maker
+from shorts_maker import config, llm, media, pipeline, presets, tts
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
-ENGINE_EDGE = "Edge TTS (기본 목소리, 인터넷 필요)"
-ENGINE_CHATTERBOX = "Chatterbox (GPU, 목소리 샘플 사용 가능)"
-LAYOUTS = {"블러 배경 (가로 영상·글자 많은 화면 추천)": "blur", "가운데 크롭 (화면 꽉 차게, 양옆 잘림)": "crop"}
+ENGINE_LABELS = {"edge": "Edge TTS (기본 목소리, 인터넷 필요)", "chatterbox": "Chatterbox (GPU, 목소리 샘플 사용 가능)"}
+LAYOUT_LABELS = {"blur": "블러 배경 (가로 영상·글자 많은 화면 추천)", "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)"}
+VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 STATE_KEYS = ("job", "title", "plan", "result")
 
 
@@ -33,53 +34,140 @@ def get_ollama_models() -> list[str]:
 
 media.ensure_ffmpeg()
 
+try:
+    models = get_ollama_models()
+except Exception:
+    models = []
+
+# ───────────────────────── 설정 상태 / 프리셋 ─────────────────────────
+# 설정 위젯은 모두 session_state의 같은 이름 키에 값을 둔다 (값 = 프리셋에 저장하는 코드값).
+ss = st.session_state
+for key, value in presets.DEFAULTS.items():
+    # 지금 화면에 없는 위젯(예: Edge 목소리를 Chatterbox 선택 중)의 값은 Streamlit이 지우므로 매번 다시 넣어 둔다
+    ss[key] = ss[key] if key in ss else value
+if models and ss.llm_model not in models:
+    ss.llm_model = config.DEFAULT_OLLAMA_MODEL if config.DEFAULT_OLLAMA_MODEL in models else models[0]
+
+
+def current_settings() -> dict:
+    return {key: ss[key] for key in presets.DEFAULTS}
+
+
+def apply_preset(name: str) -> None:
+    try:
+        values, dropped = presets.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        ss.preset_msg = ("error", str(e))
+        return
+    notes = [f"설정 {', '.join(dropped)}은(는) 올바르지 않아 기본값을 썼습니다"] if dropped else []
+    if models and values["llm_model"] not in models:
+        notes.append(f"LLM '{values['llm_model']}'이(가) 설치되어 있지 않아 지금 모델을 그대로 둡니다")
+        values["llm_model"] = ss.llm_model
+    ss.update(values)
+    ss.preset_loaded = (name, values)
+    ss.preset_msg = ("warning", f"'{name}' 불러옴. " + ". ".join(notes)) if notes else ("success", f"'{name}' 프리셋을 불러왔습니다.")
+
+
+def save_preset() -> None:
+    try:
+        name, existed = presets.save(ss.preset_new_name, current_settings())
+    except ValueError as e:
+        ss.preset_msg = ("error", str(e))
+        return
+    ss.preset_loaded = (name, current_settings())
+    ss.preset_select = name
+    ss.preset_msg = ("success", f"'{name}' 프리셋을 {'덮어썼습니다' if existed else '저장했습니다'}.")
+
+
+def delete_preset(name: str) -> None:
+    try:
+        presets.delete(name)
+    except ValueError as e:
+        ss.preset_msg = ("error", str(e))
+        return
+    if ss.get("preset_loaded", ("",))[0] == name:
+        ss.pop("preset_loaded")
+    ss.preset_select = "기본"
+    ss.preset_msg = ("success", f"'{name}' 프리셋을 지웠습니다.")
+
+
+def setting_slider(label: str, key: str, **kwargs):
+    """프리셋 범위(최솟값, 최댓값, 간격)를 쓰는 슬라이더. 값은 session_state[key]에 있다."""
+    lo, hi, step = presets.RANGES[key]
+    return st.slider(label, min_value=lo, max_value=hi, step=step, key=key, **kwargs)
+
+
 # ───────────────────────── 사이드바: 설정 ─────────────────────────
 with st.sidebar:
     st.header("⚙️ 설정")
 
+    st.subheader("💾 프리셋")
+    names = presets.list_presets()
+    if ss.get("preset_select") not in names:
+        ss.preset_select = names[0]
+    selected = st.selectbox("프리셋", names, key="preset_select", format_func=lambda n: f"⭐ {n}" if presets.is_builtin(n) else n)
+    col_load, col_delete = st.columns(2)
+    col_load.button("불러오기", on_click=apply_preset, args=(selected,), width="stretch")
+    col_delete.button(
+        "삭제", on_click=delete_preset, args=(selected,), width="stretch",
+        disabled=presets.is_builtin(selected), help="⭐ 기본 제공 프리셋은 지울 수 없습니다.",
+    )
+    with st.expander("현재 설정을 프리셋으로 저장"):
+        st.text_input("프리셋 이름", key="preset_new_name", placeholder="예: 여행 브이로그용", max_chars=40)
+        st.button("저장", on_click=save_preset, type="primary", width="stretch",
+                  help="같은 이름이 있으면 덮어씁니다. 목소리 샘플 파일은 저장되지 않습니다.")
+    loaded = ss.get("preset_loaded")
+    if loaded:
+        changed = loaded[1] != current_settings()
+        st.caption(f"현재: {loaded[0]}" + (" (수정됨)" if changed else ""))
+    msg = ss.pop("preset_msg", None)
+    if msg:
+        getattr(st, msg[0])(msg[1])
+
     st.subheader("영상 이해 / 대본")
-    try:
-        models = get_ollama_models()
-    except Exception:
-        models = []
+    if not models:
         st.error("Ollama에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요.")
-    default_model = models.index(config.DEFAULT_OLLAMA_MODEL) if config.DEFAULT_OLLAMA_MODEL in models else 0
     llm_model = st.selectbox(
-        "LLM (Ollama)", models, index=default_model,
+        "LLM (Ollama)", models, key="llm_model",
         help="장면 이미지를 이해해야 하므로 vision을 지원하는 모델(qwen3.5, gemma4 등)을 고르세요.",
     ) if models else None
-    style_label = st.selectbox("나레이션 말투", list(llm.STYLES))
-    target_sec = st.slider("쇼츠 길이 목표 (초)", 15, 90, 40, 5)
+    st.selectbox("나레이션 말투", presets.CHOICES["style"], key="style")
+    setting_slider("쇼츠 길이 목표 (초)", "target_sec")
 
     st.subheader("나레이션 목소리")
-    engine_name = st.radio("음성 엔진", [ENGINE_EDGE, ENGINE_CHATTERBOX])
+    st.radio("음성 엔진", presets.CHOICES["engine"], format_func=ENGINE_LABELS.get, key="engine")
     voice_sample = None
-    if engine_name == ENGINE_EDGE:
-        voice_label = st.selectbox("목소리", list(tts.EDGE_VOICES))
-        rate = st.slider("말하기 속도 (%)", -20, 40, 10, 5)
+    if ss.engine == "edge":
+        st.selectbox("목소리", presets.CHOICES["edge_voice"], format_func=VOICE_LABELS.get, key="edge_voice")
+        setting_slider("말하기 속도 (%)", "rate")
     else:
-        exaggeration = st.slider("감정 표현 강도", 0.25, 1.5, 0.5, 0.05)
+        setting_slider("감정 표현 강도", "exaggeration")
         voice_sample = st.file_uploader(
             "목소리 샘플 (선택, 5~15초)", type=["wav", "mp3", "m4a"],
-            help="비워 두면 Chatterbox 기본 목소리를 씁니다. 본인 목소리나 동의받은 목소리만 올리세요.",
+            help="비워 두면 Chatterbox 기본 목소리를 씁니다. 본인 목소리나 동의받은 목소리만 올리세요. 프리셋에는 저장되지 않습니다.",
         )
 
     st.subheader("소리")
-    original_gain = st.slider("원본 소리 크기", 0.0, 1.0, 0.8, 0.05)
-    duck_gain = st.slider(
-        "나레이션 중 원본 소리 크기", 0.0, 1.0, 0.2, 0.05,
+    setting_slider("원본 소리 크기", "original_gain")
+    setting_slider(
+        "나레이션 중 원본 소리 크기", "duck_gain",
         help="나레이션이 나오는 동안 원본 소리를 이 비율로 줄입니다 (원본 소리 크기에 곱해짐).",
     )
 
     st.subheader("화면 / 자막")
-    layout_label = st.radio("세로 변환 방식", list(LAYOUTS))
-    show_title = st.checkbox("위쪽에 제목 표시", value=True)
-    font_size = st.slider("자막 크기", 48, 110, 72, 2)
-    margin_percent = st.slider("자막 위치 (아래에서 %)", 5, 50, 20)
-    color = st.color_picker("자막 색", "#FFFFFF")
+    st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
+    st.checkbox("위쪽에 제목 표시", key="show_title")
+    setting_slider("자막 크기", "font_size")
+    setting_slider("자막 위치 (아래에서 %)", "margin_percent")
+    st.color_picker("자막 색", key="color")
 
     st.divider()
     st.caption("⚠️ 본인이 권리를 가진 영상이나 허락받은 영상만 사용하세요. 목소리 샘플은 본인 또는 동의받은 사람의 목소리만 사용하세요.")
+    st.caption(f"v{shorts_maker.__version__}")
+
+style_label, target_sec = ss.style, ss.target_sec
+show_title, font_size, margin_percent, color = ss.show_title, ss.font_size, ss.margin_percent, ss.color
+original_gain, duck_gain = ss.original_gain, ss.duck_gain
 
 # ───────────────────────── 업로드 ─────────────────────────
 st.title("🎬 AI 쇼츠 나레이션 스튜디오")
@@ -209,16 +297,16 @@ with col_renarrate:
 if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips):
     with st.status("쇼츠를 만드는 중...", expanded=True) as status:
         try:
-            if engine_name == ENGINE_EDGE:
-                engine = tts.EdgeTTSEngine(tts.EDGE_VOICES[voice_label], rate)
+            if ss.engine == "edge":
+                engine = tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
             else:
                 reference = pipeline.save_voice_sample(voice_sample.name, voice_sample.getvalue()) if voice_sample else None
-                engine = tts.ChatterboxEngine(get_chatterbox(), reference, exaggeration)
+                engine = tts.ChatterboxEngine(get_chatterbox(), reference, ss.exaggeration)
             st.write("🎙️ 나레이션 음성 만들기")
             bar = st.progress(0.0)
             video, report = pipeline.make_short(
                 job, title if show_title else "", clips, engine, original_gain, duck_gain,
-                LAYOUTS[layout_label], font_size, margin_percent, color,
+                ss.layout, font_size, margin_percent, color,
                 on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 문장"),
             )
             st.session_state.result = {"video": video, "report": report}

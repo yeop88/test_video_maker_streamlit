@@ -73,6 +73,18 @@ streamlit run app.py
 
 사이드바에서 LLM, 나레이션 말투(정보 전달 / 유쾌한 리뷰 / 감성 스토리), 쇼츠 길이, 목소리, 원본 소리 크기, 세로 변환 방식, 제목 표시, 자막 크기·위치·색을 바꿀 수 있습니다.
 
+### 설정 프리셋
+
+자주 쓰는 설정 조합을 사이드바 맨 위 **💾 프리셋**에 저장해 두고 불러올 수 있습니다.
+
+- **불러오기**: 목록에서 고르고 「불러오기」. 그 뒤로 설정을 바꾸면 「현재: 이름 (수정됨)」으로 표시됩니다.
+- **저장**: 「현재 설정을 프리셋으로 저장」에 이름을 넣고 「저장」. 같은 이름이 있으면 덮어씁니다.
+- **삭제**: 목록에서 고르고 「삭제」.
+- ⭐ 표시는 기본 제공 프리셋입니다(기본, 감성 브이로그, 정보 요약, 유쾌한 리뷰). 덮어쓰거나 지울 수 없습니다.
+- 사용자 프리셋은 `workdir/presets/<이름>.json`에 저장됩니다. 파일을 복사하면 다른 PC로 옮길 수 있습니다.
+- 목소리 샘플 파일은 프리셋에 저장되지 않습니다.
+- 설치되지 않은 LLM이 들어 있는 프리셋을 불러오면 지금 모델을 그대로 둡니다.
+
 ## 폴더 구조
 
 ```
@@ -87,8 +99,10 @@ shorts_maker/
   mixing.py             나레이션 배치, 원본 소리 더킹 믹싱
   subtitles.py          쇼츠 스타일 ASS 자막 + 제목
   pipeline.py           단계별 작업 연결
+  presets.py            설정 프리셋 저장·불러오기·검증
 tests/
   verify_pipeline.py    전체 파이프라인 검증 (3가지 조건, 수치 판정)
+  test_presets_ui.py    프리셋 화면 테스트 (Streamlit AppTest)
 docs/test_reports/      검증 기록
 workdir/                업로드 영상과 중간 결과물 (git 제외)
 ```
@@ -96,7 +110,8 @@ workdir/                업로드 영상과 중간 결과물 (git 제외)
 ## 검증
 
 ```bash
-.venv\Scripts\python tests\verify_pipeline.py
+.venv\Scripts\python tests\verify_pipeline.py    # 전체 파이프라인 (GPU, Ollama, 인터넷 필요, 약 3분)
+.venv\Scripts\python tests\test_presets_ui.py    # 프리셋 화면 (몇 초)
 ```
 
 정답을 아는 테스트 영상 3개를 직접 만들어 전체 과정을 돌립니다.
@@ -119,6 +134,23 @@ workdir/                업로드 영상과 중간 결과물 (git 제외)
 - 목소리 샘플은 본인 또는 동의받은 사람의 목소리만 사용하세요. Chatterbox 출력에는 AI 생성 음성임을 알리는 워터마크(Perth)가 들어갑니다.
 - AI가 쓴 나레이션은 틀릴 수 있습니다. 2단계 표에서 꼭 확인하세요.
 - 비상업적 학습·포트폴리오용 프로젝트입니다.
+
+## 버전과 릴리즈
+
+[Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다. 버전은 `MAJOR.MINOR.PATCH`이고, [Releases](https://github.com/yeop88/test_video_maker_streamlit/releases)와 Git 태그 `vX.Y.Z`로 배포합니다. 변경 내용은 [CHANGELOG.md](CHANGELOG.md)에 있습니다.
+
+이 프로젝트에서 "공개 인터페이스"는 다음을 말합니다.
+- 화면의 설정 항목
+- 프리셋 파일 형식(`workdir/presets/*.json`)
+- 실행 방법과 요구 환경(Python, GPU, Ollama, `requirements.txt`)
+
+| 올리는 자리 | 언제 |
+|---|---|
+| **MAJOR** | 기존 프리셋을 못 읽게 되거나, 설정 항목을 없애거나 뜻을 바꾸거나, 요구 환경이 바뀌어 다시 설치해야 할 때 |
+| **MINOR** | 이전과 호환되는 기능 추가 (새 설정, 새 프리셋, 새 처리 단계, 품질 개선) |
+| **PATCH** | 호환되는 버그 수정, 문서·테스트만 바꾼 경우 |
+
+**1.0.0 전(0.y.z)** 에는 아직 형태가 자리 잡는 중이라, 호환되지 않는 변경도 MINOR를 올리고 CHANGELOG에 **Breaking**으로 표시합니다.
 
 ## 라이선스
 

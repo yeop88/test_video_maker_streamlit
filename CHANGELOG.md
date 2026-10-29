@@ -1,6 +1,23 @@
 # Changelog
 
-이 프로젝트의 주요 변경 사항을 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따릅니다.
+이 프로젝트의 주요 변경 사항을 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고, 버전은 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다 (규칙은 [README의 버전과 릴리즈](README.md#버전과-릴리즈) 참고).
+
+## [Unreleased]
+
+## [0.4.0] - 2026-10-29
+
+### Added
+- **설정 프리셋**: 사이드바 설정을 이름 붙여 저장하고 불러오거나 지울 수 있습니다.
+  - 기본 제공 프리셋 4개: 기본, 감성 브이로그, 정보 요약(빠르게), 유쾌한 리뷰. 덮어쓰거나 지울 수 없습니다.
+  - 사용자 프리셋은 `workdir/presets/<이름>.json`에 저장되고, 같은 이름이면 덮어씁니다.
+  - 불러온 프리셋 이름과 그 뒤로 바꾼 설정이 있는지 "(수정됨)"으로 표시합니다.
+  - 불러올 때 값을 확인합니다. 범위 밖 숫자는 범위 안으로 맞추고, 잘못된 선택지는 기본값으로 바꾸고, 설치되지 않은 LLM은 지금 모델을 그대로 둡니다. 손상된 파일은 오류로 알립니다.
+  - 목소리 샘플 파일은 프리셋에 저장하지 않습니다.
+- 사이드바 아래 버전 표시. 버전은 `shorts_maker/__init__.py`의 `__version__` 한 곳에서 관리합니다.
+- 프리셋 화면 테스트 [tests/test_presets_ui.py](tests/test_presets_ui.py) (Streamlit AppTest, 22개 검사).
+
+### Changed
+- 사이드바 설정값을 `session_state`의 설정 이름 키(`target_sec`, `engine` 등)로 관리합니다. 엔진·레이아웃·목소리는 화면 문구 대신 코드값(`edge`, `blur`, 목소리 ID)으로 저장합니다.
 
 ## [0.3.0] - 2026-10-29
 
@@ -85,3 +102,7 @@
 ### Added
 - [docs/huggingface_streamlit_examples.md](docs/huggingface_streamlit_examples.md): Streamlit으로 배포하기 좋은 Hugging Face 예제 30선
 - [docs/huggingface_service_ideas.md](docs/huggingface_service_ideas.md): 모델 조합 프로젝트 아이디어 10선 (2026-10-29 비상업·난이도 순으로 개정)
+
+[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/yeop88/test_video_maker_streamlit/releases/tag/v0.3.0
