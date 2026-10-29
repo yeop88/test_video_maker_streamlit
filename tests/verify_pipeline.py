@@ -1,0 +1,307 @@
+"""3가지 조건으로 전체 파이프라인(분석 → 구성 → 나레이션 쇼츠)을 돌리고 수치로 검증한다.
+
+사용법 (프로젝트 루트에서, GPU와 Ollama 실행 중, Edge TTS용 인터넷 필요):
+    .venv\\Scripts\\python tests\\verify_pipeline.py [결과 폴더]
+
+테스트 영상은 Windows 기본 배경화면 이미지(호수 풍경, 추상 조형물)와 Edge TTS 음성,
+화음 배경음으로 직접 만든다. 장면 내용과 대사를 알고 있으므로 나레이션이 영상 내용에
+근거하는지, 구간이 대사 중간에서 끊기지 않는지 확인할 수 있다.
+결과 폴더(기본 workdir/verify)에 results.json과 화면 캡처가 저장된다.
+"""
+import asyncio, difflib, hashlib, json, re, shutil, sys, time
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from shorts_maker import asr, config, llm, media, pipeline, tts
+from shorts_maker.korean_numbers import number_values
+import edge_tts
+
+OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "workdir" / "verify"
+OUT.mkdir(parents=True, exist_ok=True)
+SR = 44100
+WALL = Path("C:/Windows/Web/Wallpaper")
+T0 = time.time()
+def log(msg): print(f"[{time.time()-T0:6.1f}s] {msg}", flush=True)
+
+TESTS = [
+    dict(
+        name="T1_korean_lake_vlog",
+        size=(1280, 720), bgm=0.08, target=30, style="감성 스토리", engine="edge", layout="blur",
+        # (장면 이미지, 화면 글자, [(목소리, 대사)])
+        scenes=[
+            (WALL / "ThemeC/img28.jpg", "", [("ko-KR-SunHiNeural", "안녕하세요."),
+                                              ("ko-KR-SunHiNeural", "오늘은 산속 호숫가로 아침 산책을 나왔어요."),
+                                              ("ko-KR-SunHiNeural", "공기가 정말 맑고, 물이 거울처럼 잔잔하네요.")]),
+            (WALL / "ThemeC/img29.jpg", "", [("ko-KR-SunHiNeural", "호수 건너편에는 소나무 숲이 길게 이어져 있어요."),
+                                              ("ko-KR-SunHiNeural", "이 길을 따라 한 바퀴 도는 데 한 시간 정도 걸립니다.")]),
+            (WALL / "ThemeC/img30.jpg", "", [("ko-KR-SunHiNeural", "마침 해가 산 위로 떠오르기 시작했어요."),
+                                              ("ko-KR-SunHiNeural", "이 순간을 보려고 새벽 다섯 시에 일어났답니다.")]),
+            (WALL.parent / "Screen/img102.jpg", "", [("ko-KR-SunHiNeural", "낮에는 근처 마을에서 쉬었다가, 저녁에 다시 왔어요."),
+                                                     ("ko-KR-SunHiNeural", "노을이 물에 비쳐서 하늘이 두 개가 된 것 같아요.")]),
+            (WALL / "ThemeC/img31.jpg", "", [("ko-KR-SunHiNeural", "조용한 곳에서 쉬고 싶다면 꼭 한번 와 보세요."),
+                                              ("ko-KR-SunHiNeural", "다음 영상에서 또 만나요.")]),
+        ],
+        keywords=["호수", "호숫가", "물", "산", "숲", "해", "노을", "풍경", "아침", "새벽", "하늘"],
+    ),
+    dict(
+        name="T2_english_sleep_tips_slides",
+        size=(1280, 720), bgm=0.0, target=25, style="정보 전달 (차분한 설명)", engine="chatterbox", layout="crop",
+        scenes=[
+            (WALL.parent / "Screen/img101.jpg", "3 Tips for Better Sleep",
+             [("en-US-JennyNeural", "Struggling to fall asleep at night?"),
+              ("en-US-JennyNeural", "Here are three simple tips that actually work.")]),
+            (WALL / "ThemeA/img20.jpg", "TIP 1: Same bedtime every day",
+             [("en-US-JennyNeural", "First, go to bed and wake up at the same time every day, even on weekends."),
+              ("en-US-JennyNeural", "Your body clock loves routine.")]),
+            (WALL / "ThemeA/img21.jpg", "TIP 2: No screens 1 hour before bed",
+             [("en-US-JennyNeural", "Second, put your phone away one hour before bed."),
+              ("en-US-JennyNeural", "The blue light keeps your brain awake.")]),
+            (WALL / "ThemeA/img23.jpg", "TIP 3: Keep your room cool",
+             [("en-US-JennyNeural", "Third, keep your bedroom cool, around eighteen degrees."),
+              ("en-US-JennyNeural", "A cooler room helps you fall asleep faster.")]),
+            (WALL / "ThemeA/img22.jpg", "Sweet dreams!",
+             [("en-US-JennyNeural", "Try these tonight and let me know how it goes."),
+              ("en-US-JennyNeural", "Sweet dreams!")]),
+        ],
+        keywords=["잠", "수면", "취침", "침실", "스마트폰", "휴대폰", "화면", "시간"],
+        # 팁 3개가 모두 담겼는가 (각 묶음에서 하나 이상)
+        topics=[["같은 시간", "일정한 시간", "규칙"], ["휴대폰", "스마트폰", "핸드폰", "폰", "화면", "블루라이트", "파란 빛"],
+                ["온도", "시원", "서늘", "18", "십팔"]],
+        # 이 말이 들어간 나레이션은 이 장면(번호) 화면 위에 나와야 한다
+        sync=[("첫째", 1), ("둘째", 2), ("셋째", 3)],
+    ),
+    dict(
+        name="T3_silent_abstract_art_voice_sample",
+        size=(1080, 1080), bgm=0.12, target=20, style="감성 스토리", engine="chatterbox_sample", layout="blur",
+        # 대사 없는 장면: (None, 길이 초)
+        scenes=[(WALL / p, "", [(None, 6.0)]) for p in
+                ["ThemeB/img24.jpg", "ThemeB/img25.jpg", "ThemeB/img26.jpg", "ThemeB/img27.jpg",
+                 "ThemeD/img32.jpg", "ThemeD/img34.jpg", "ThemeD/img35.jpg"]],
+        keywords=["색", "모양", "형태", "곡선", "물결", "조형", "리본", "추상", "꽃", "입체", "빛", "흐름", "파란", "주황"],
+    ),
+]
+
+
+def norm(text):
+    return re.sub(r"[\s\W_]+", "", text.lower())
+
+
+def coverage(intended, heard):
+    """의도한 글자 중 다시 들은 결과에서 순서대로 찾은 비율."""
+    a, b = norm(intended), norm(heard)
+    matched = sum(m.size for m in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks())
+    return matched / max(1, len(a))
+
+
+def tts_edge(text, voice, path):
+    asyncio.run(edge_tts.Communicate(text, voice).save(str(path)))
+    wav = media.load_audio(path, SR, 1)[:, 0]
+    loud = np.flatnonzero(np.abs(wav) > 0.01)
+    return wav[max(0, loud[0] - 1000): loud[-1] + 1000] if loud.size else wav
+
+
+def make_video(t, folder):
+    """장면별 이미지(천천히 확대) + 대사 + 배경 화음으로 테스트 영상을 만든다.
+
+    돌려주는 값: 영상 경로, 대사 목록 [(시작, 끝, 문장)], 장면 목록 [(시작, 끝, 이미지)]
+    """
+    shutil.copy("C:/Windows/Fonts/arialbd.ttf", folder / "arialbd.ttf")  # drawtext도 상대 경로로
+    w, h = t["size"]
+    audio_parts, lines, scenes, clips = [], [], [], []
+    cursor = 0.0
+    for i, (image, caption, speech) in enumerate(t["scenes"]):
+        scene_start = cursor
+        part = [np.zeros(int(0.6 * SR), np.float32)]
+        cursor += 0.6
+        for j, (voice, text) in enumerate(speech):
+            if voice is None:
+                part.append(np.zeros(int(text * SR), np.float32))
+                cursor += text
+                continue
+            wav = tts_edge(text, voice, folder / f"s{i}_{j}.mp3")
+            lines.append((cursor, cursor + len(wav) / SR, text))
+            part += [wav, np.zeros(int(0.5 * SR), np.float32)]
+            cursor += len(wav) / SR + 0.5
+        part.append(np.zeros(int(0.4 * SR), np.float32))
+        cursor += 0.4
+        audio_parts += part
+        dur = sum(len(p) for p in part) / SR
+        cursor = scene_start + dur  # 샘플 단위 반올림 오차가 쌓이지 않게
+        scenes.append((scene_start, scene_start + dur, image.name))
+        clip = folder / f"scene{i}.mp4"
+        frames = round(dur * 30)
+        vf = (f"scale=1920:-2,zoompan=z='min(zoom+0.0007,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+              f":d={frames}:s={w}x{h}:fps=30")
+        if caption:  # 글자 속 콜론이 필터 문법과 겹치지 않도록 파일로 넘긴다
+            (folder / f"cap{i}.txt").write_text(caption, encoding="utf-8")
+            vf += (f",drawtext=fontfile=arialbd.ttf:textfile=cap{i}.txt:fontsize={h // 11}:fontcolor=white"
+                   f":box=1:boxcolor=black@0.55:boxborderw=24:x=(w-text_w)/2:y=(h-text_h)/2")
+        media.run_ffmpeg(["-loop", "1", "-i", str(image), "-vf", vf, "-frames:v", str(frames),
+                          "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", clip.name], cwd=folder)
+        clips.append(clip.name)
+    speech = np.concatenate(audio_parts)
+    tt = np.arange(len(speech)) / SR
+    chord = sum(np.sin(2 * np.pi * f * tt) for f in (220.0, 277.18, 329.63)) / 3
+    mix = np.clip(speech + t["bgm"] * chord, -1, 1).astype(np.float32)
+    sf.write(folder / "audio.wav", mix, SR)
+    (folder / "list.txt").write_text("".join(f"file '{c}'\n" for c in clips), encoding="utf-8")
+    video = folder / f"{t['name']}.mp4"
+    media.run_ffmpeg(["-f", "concat", "-safe", "0", "-i", "list.txt", "-i", "audio.wav", "-map", "0:v", "-map", "1:a",
+                      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", video.name], cwd=folder)
+    return video, lines, scenes
+
+
+def ass_cues(path):
+    """subs.ass에서 나레이션 자막(Default 스타일) 시간을 읽는다."""
+    def sec(s):
+        h, m, rest = s.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(rest)
+    cues = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("Dialogue:") and ",Default," in line:
+            parts = line.split(",", 9)
+            cues.append((sec(parts[1]), sec(parts[2]), parts[9]))
+    return cues
+
+
+whisper = asr.load_whisper()
+chatterbox = None
+results = []
+model = config.DEFAULT_OLLAMA_MODEL
+
+for t in TESTS:
+    log(f"===== {t['name']} =====")
+    folder = OUT / t["name"]
+    folder.mkdir(parents=True, exist_ok=True)
+    src, true_lines, true_scenes = make_video(t, folder)
+    info = media.probe(src)
+    r = {"test": t["name"], "source": f"{info.width}x{info.height} {info.duration:.1f}s", "target": t["target"]}
+    timings = {}
+
+    # 1단계 (app.py와 같은 순서)
+    t1 = time.time()
+    data = src.read_bytes()  # 앱처럼 내용 해시를 ID로 써야 다시 만든 테스트 영상이 이전 파일에 가려지지 않는다
+    source = pipeline.save_upload(f"verify_{t['name']}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
+    job = pipeline.prepare_job(source, 0.0, info.duration)
+    pipeline.transcribe(job, whisper)
+    pipeline.capture_frames(job)
+    pipeline.describe_frames(job, model)
+    title, clips = pipeline.plan(job, model, t["target"], llm.STYLES[t["style"]])
+    timings["analyze_plan"] = round(time.time() - t1, 1)
+
+    r["frames"] = len(job.frames)
+    r["frames_described"] = sum(1 for f in job.frames if f["caption"])
+    r["speech_segments"] = len(job.segments)
+    r["title"] = title
+    r["clips"] = clips
+    narration = " ".join(c["narration"] for c in clips)
+    r["clip_count"] = len(clips)
+    r["clips_total_sec"] = round(sum(c["end"] - c["start"] for c in clips), 1)
+    r["narration_foreign_script"] = bool(llm.FOREIGN_SCRIPT.search(narration + title))
+    r["narration_hangul_ratio"] = round(len(re.findall(r"[가-힣]", narration)) / max(1, len(norm(narration))), 2)
+    r["keywords_hit"] = [k for k in t["keywords"] if k in narration]
+    r["topics_missing"] = [g[0] for g in t.get("topics", []) if not any(k in narration for k in g)]
+    # 원본(대사, 화면 글자)에 없는 숫자를 지어냈는가
+    truth_text = " ".join(text for _, _, text in true_lines) + " " + " ".join(cap for _, cap, _ in t["scenes"])
+    r["invented_numbers"] = sorted(number_values(narration) - number_values(truth_text) - {1})
+    # 나레이션과 화면이 맞는가: 그 말을 하는 구간이 해당 장면과 1.5초 이상 겹치는가
+    r["out_of_sync"] = []
+    for word, idx in t.get("sync", []):
+        sa, sb, _ = true_scenes[idx]
+        for c in clips:
+            if word in c["narration"] and min(c["end"], sb) - max(c["start"], sa) < 1.5:
+                r["out_of_sync"].append(f"{word}: clip {c['start']:.1f}-{c['end']:.1f}, scene {sa:.1f}-{sb:.1f}")
+    # 구간 경계가 원본 대사 중간에 걸리는가 (앞뒤 0.15초 여유)
+    r["cuts_mid_sentence"] = sum(
+        1 for c in clips for x in (c["start"], c["end"])
+        if any(a + 0.15 < x < b - 0.15 for a, b, _ in true_lines)
+    )
+    r["clips_overlap"] = sum(1 for a, b in zip(clips, clips[1:]) if b["start"] < a["end"])
+
+    # 3단계
+    t2 = time.time()
+    if t["engine"] == "edge":
+        engine = tts.EdgeTTSEngine("ko-KR-SunHiNeural", 10)
+    else:
+        if chatterbox is None:
+            chatterbox = tts.load_chatterbox()
+        reference = None
+        if t["engine"] == "chatterbox_sample":  # 목소리 샘플 자리에 합성 음성을 사용
+            sample = folder / "voice_sample.mp3"
+            asyncio.run(edge_tts.Communicate(
+                "안녕하세요. 저는 오늘 여러분께 아름다운 작품들을 소개해 드릴 안내자입니다. 천천히 함께 둘러보시죠.",
+                "ko-KR-InJoonNeural").save(str(sample)))
+            reference = pipeline.save_voice_sample(sample.name, sample.read_bytes())
+        engine = tts.ChatterboxEngine(chatterbox, reference, 0.5)
+    out, report = pipeline.make_short(job, title, clips, engine, 0.8, 0.2, t["layout"], 72, 20, "#FFFFFF")
+    timings["make_short"] = round(time.time() - t2, 1)
+
+    oi = media.probe(out)
+    r["output"] = f"{oi.width}x{oi.height} {oi.duration:.2f}s audio={oi.has_audio}"
+    cues = ass_cues(job.dir / "subs.ass")
+    r["cues"] = len(cues)
+    r["report"] = report
+    r["narration_cut"] = sum(1 for x in report if "잘림" in x["상태"])
+
+    # 결과 소리를 다시 인식: 나레이션이 제대로 들리는가 (원본 대사도 섞여 들리므로 포함 비율로 봄)
+    segs, out_lang = asr.transcribe(whisper, out)
+    heard = " ".join(s.text for s in segs)
+    r["heard"] = heard
+    r["narration_heard_coverage"] = round(coverage(narration, heard), 3)
+
+    # 나레이션 중 원본 소리 크기 / 나레이션 없을 때 원본 소리 크기 (진폭 비율, 기대값 = duck 0.2)
+    # 최종 소리에서 나레이션 트랙을 빼면 원본 소리만 남는다 (클리핑 방지 배율은 최소제곱으로 맞춤)
+    mixed = media.load_audio(job.dir / "mixed.wav", SR, 1)[:, 0]
+    narr = media.load_audio(job.dir / "narration.wav", SR, 1)[:, 0]
+    n = min(len(mixed), len(narr))
+    mixed, narr = mixed[:n], narr[:n]
+    scale = float(np.dot(mixed, narr) / max(1e-9, np.dot(narr, narr)))
+    rest = mixed - scale * narr
+    mask = np.zeros(n, bool)
+    for a, b, _ in cues:
+        mask[int((a + 0.2) * SR): int((b - 0.2) * SR)] = True  # 소리 크기가 바뀌는 앞뒤 0.2초는 제외
+    rms = lambda x: float(np.sqrt(np.mean(x ** 2))) if x.size else 0.0
+    r["duck_amplitude_ratio"] = round(rms(rest[mask]) / max(1e-9, rms(rest[~mask])), 3) if (~mask).sum() > SR else None
+
+    # 화면 캡처 (첫 자막 중간, 마지막 자막 중간)
+    for k, cue in (("first", cues[0]), ("last", cues[-1])):
+        mid = (cue[0] + cue[1]) / 2
+        media.run_ffmpeg(["-ss", f"{mid:.2f}", "-i", str(out), "-frames:v", "1", "-vf", "scale=360:640",
+                          str(OUT / f"{t['name']}_{k}.png")])
+
+    checks = {
+        "output_1080x1920_audio": (oi.width, oi.height) == (1080, 1920) and oi.has_audio,
+        "frames_described": r["frames_described"] == r["frames"] and r["frames"] > 0,
+        "clips_valid": 1 <= len(clips) <= 6 and r["clips_overlap"] == 0
+                       and all(0 <= c["start"] < c["end"] <= job.duration + 0.01 for c in clips),
+        "length_near_target": 0.5 * t["target"] <= oi.duration <= 1.6 * t["target"],
+        "narration_korean": not r["narration_foreign_script"] and r["narration_hangul_ratio"] >= 0.9,
+        "narration_grounded(keywords>=2)": len(r["keywords_hit"]) >= 2,
+        "all_topics_covered": not r["topics_missing"],
+        "no_invented_numbers": not r["invented_numbers"],
+        "narration_matches_scene": not r["out_of_sync"],
+        "no_mid_sentence_cut": r["cuts_mid_sentence"] == 0,
+        "narration_heard>=0.85": r["narration_heard_coverage"] >= 0.85,
+        "subs_within_video": bool(cues) and cues[-1][1] <= oi.duration + 0.05,
+        "no_narration_cut": r["narration_cut"] == 0,
+    }
+    if t["name"].startswith("T3"):
+        checks["ducking(ratio<0.35)"] = r["duck_amplitude_ratio"] is not None and r["duck_amplitude_ratio"] < 0.35
+        checks["no_speech_in_silent_video"] = r["speech_segments"] == 0
+    checks = {k: bool(v) for k, v in checks.items()}
+    r["checks"] = checks
+    r["passed"] = all(checks.values())
+    r["timings"] = timings
+    r["true_scenes"] = [f"{a:.1f}-{b:.1f} {n}" for a, b, n in true_scenes]
+    r["frame_captions"] = [f"{f['t']:.1f}s {f['caption']}" for f in job.frames]
+    r["subtitles"] = [f"{a:.1f}-{b:.1f} {txt}" for a, b, txt in cues]
+    r["output_path"] = str(out)
+    results.append(r)
+    log(f"{t['name']} passed={r['passed']} {checks}")
+
+(OUT / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+log("ALL DONE " + " ".join(f"{r['test']}={'PASS' if r['passed'] else 'FAIL'}" for r in results))

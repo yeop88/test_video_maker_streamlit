@@ -1,0 +1,6 @@
+[server]
+maxUploadSize = 1024  # MB
+
+[theme]
+base = "dark"
+primaryColor = "#FF4B6E"

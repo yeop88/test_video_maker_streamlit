@@ -1,0 +1,357 @@
+"""영상 한 개를 처리하는 단계별 작업. app.py는 화면만 담당하고 실제 처리는 여기서 한다.
+
+1단계 analyze: 음성 인식 + 장면 캡처·설명 → 타임라인
+2단계 plan:    LLM이 쇼츠에 쓸 구간과 구간별 나레이션 대본을 정한다 (사용자가 표에서 수정)
+3단계 make_short: 나레이션 음성 합성 → 구간 길이 맞추기 → 자르고 잇기 → 원본 소리 줄여 섞기 → 세로 변환 + 자막
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+import shutil
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+import numpy as np
+import pandas as pd
+import soundfile as sf
+
+from . import config, llm, media, mixing, subtitles
+from .config import MIX_SAMPLE_RATE as SR
+
+LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
+TAIL_SEC = 0.4  # 나레이션이 끝나고 다음 구간으로 넘어가기까지 쉼
+MIN_CLIP_SEC = 1.5
+
+
+@dataclass
+class Job:
+    dir: Path
+    video: Path  # 분석할 구간만 자른 영상
+    audio: Path  # 원본 오디오 (44.1kHz 스테레오)
+    duration: float
+    language: str = ""
+    segments: list[dict] = field(default_factory=list)  # 원본 대사: start, end, text
+    voices: list[tuple[float, float]] = field(default_factory=list)  # 목소리가 있는 구간 (VAD)
+    frames: list[dict] = field(default_factory=list)  # 장면: t, path, caption
+
+
+Progress = Callable[[int, int], None]
+
+
+def _no_progress(done: int, total: int) -> None:
+    pass
+
+
+def save_upload(upload_id: str, filename: str, data: bytes) -> Path:
+    folder = config.WORK_DIR / upload_id
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"source{Path(filename).suffix.lower()}"
+    if not path.exists():
+        path.write_bytes(data)
+    return path
+
+
+def save_voice_sample(filename: str, data: bytes) -> Path:
+    """Chatterbox용 목소리 샘플을 WAV로 바꿔 저장한다 (같은 파일이면 재사용)."""
+    folder = config.WORK_DIR / "voices"
+    folder.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(data).hexdigest()[:12]
+    wav = folder / f"{key}.wav"
+    if not wav.exists():
+        raw = folder / f"{key}{Path(filename).suffix.lower()}"
+        raw.write_bytes(data)
+        media.extract_audio(raw, wav, sr=24000, channels=1)
+    return wav
+
+
+def prepare_job(source: Path, start: float, end: float) -> Job:
+    folder = source.parent / "job"
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir()
+    video = folder / "input.mp4"
+    media.trim(source, video, start, end)
+    info = media.probe(video)
+    audio = folder / "audio.wav"
+    if info.has_audio:
+        media.extract_audio(video, audio)
+    else:  # 소리 없는 영상도 나레이션은 입힐 수 있으므로 무음 트랙을 만든다
+        sf.write(audio, np.zeros((int(info.duration * SR), 2), np.float32), SR)
+    return Job(dir=folder, video=video, audio=audio, duration=info.duration)
+
+
+# ───────────────────────── 1단계: 영상 이해 ─────────────────────────
+
+
+def transcribe(job: Job, asr_pipe) -> None:
+    from . import asr
+
+    wav = media.load_audio(job.audio, asr.ASR_SAMPLE_RATE, 1)[:, 0]
+    if wav.size == 0 or float(np.abs(wav).max()) < 0.01:  # 무음이면 인식하지 않음
+        return
+    job.voices = asr.voice_regions(wav)
+    segments, language = asr.transcribe(asr_pipe, job.audio)
+    job.language = language
+    job.segments = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
+
+
+def capture_frames(job: Job) -> None:
+    interval = max(config.MIN_FRAME_INTERVAL, job.duration / config.MAX_FRAMES)
+    folder = job.dir / "frames"
+    folder.mkdir(exist_ok=True)
+    job.frames = []
+    t = interval / 2
+    while t < job.duration:
+        path = folder / f"{len(job.frames):03d}.jpg"
+        media.extract_frame(job.video, t, path, config.FRAME_WIDTH)
+        if path.exists():
+            job.frames.append({"t": round(t, 2), "path": path, "caption": ""})
+        t += interval
+
+
+def describe_frames(job: Job, model: str, on_progress: Progress = _no_progress) -> None:
+    for i, frame in enumerate(job.frames):
+        frame["caption"] = llm.describe_frame(model, frame["path"])
+        on_progress(i + 1, len(job.frames))
+
+
+def timeline(job: Job) -> str:
+    return llm.timeline_text(job.frames, job.segments)
+
+
+# ───────────────────────── 2단계: 쇼츠 구성 ─────────────────────────
+
+
+def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list[dict]]:
+    """(제목, 구간 목록)을 돌려준다. 구간은 start, end, narration.
+
+    구간 고르기와 나레이션 쓰기를 나눈다. 한 번에 시키면 LLM이 다른 구간의 내용을 엉뚱한 화면에
+    붙이는 일이 있어서, 나레이션은 구간마다 그 시간의 장면·대사만 보여 주고 쓰게 한다.
+    """
+    selection = llm.select_clips(model, timeline(job), job.duration, target_sec)
+    clips = normalize_clips(job, [{"start": c.start, "end": c.end, "narration": ""} for c in selection.clips])
+    # 다시 요청해도 길이가 크게 틀리면 코드로 맞춘다
+    total = sum(c["end"] - c["start"] for c in clips)
+    if total > 1.3 * target_sec:  # 구간 끝을 같은 비율로 줄인다
+        ratio = target_sec / total
+        for c in clips:
+            c["end"] = c["start"] + max(MIN_CLIP_SEC, (c["end"] - c["start"]) * ratio)
+        clips = normalize_clips(job, clips)
+    elif total < 0.75 * target_sec:  # 구간마다 앞뒤 빈 곳으로 똑같이 늘린다
+        share = (target_sec - total) / len(clips)
+        for i, c in enumerate(clips):
+            after = (clips[i + 1]["start"] if i + 1 < len(clips) else job.duration) - c["end"]
+            before = c["start"] - (clips[i - 1]["end"] if i > 0 else 0.0)
+            grow_end = min(max(0.0, after), share)
+            c["end"] += grow_end
+            c["start"] -= min(max(0.0, before), share - grow_end)
+        clips = normalize_clips(job, clips)
+    return selection.title, narrate(job, clips, model, style)
+
+
+def narrate(job: Job, clips: list[dict], model: str, style: str) -> list[dict]:
+    """구간마다 그 시간의 장면 설명과 대사를 보여 주고 나레이션을 쓴다."""
+    items = [
+        {"start": c["start"], "end": c["end"], "excerpt": llm.timeline_text(job.frames, job.segments, c["start"], c["end"])}
+        for c in clips
+    ]
+    texts = llm.write_narrations(model, items, style)
+    return [{**c, "narration": t} for c, t in zip(clips, texts)]
+
+
+def _speech_spans(job: Job) -> list[tuple[float, float]]:
+    return [(s["start"], s["end"]) for s in job.segments] + list(job.voices)
+
+
+def _safe_cut(job: Job, t: float, low: float, high: float, prefer_later: bool) -> float:
+    """t가 대사 중간이면 low~high 안에서 가장 가까운 대사 경계로 옮긴다."""
+    for _ in range(5):  # 옮긴 곳이 또 다른 대사 중간일 수 있음
+        inside = next(((lo, hi) for lo, hi in _speech_spans(job) if lo < t < hi), None)
+        if inside is None:
+            return t
+        options = [inside[1] + 0.15, inside[0] - 0.1]
+        if not prefer_later:
+            options.reverse()
+        moved = next((x for x in options if low <= x <= high), None)
+        if moved is None:
+            return t
+        t = moved
+    return t
+
+
+def normalize_clips(job: Job, clips: list[dict]) -> list[dict]:
+    """영상 범위 안으로 맞추고, 원본 대사 중간에서 끊기지 않게 경계를 옮기고, 겹치면 합친다."""
+    fixed = []
+    for clip in clips:
+        a = min(max(0.0, float(clip["start"])), job.duration)
+        b = min(max(0.0, float(clip["end"])), job.duration)
+        # 3초 안쪽이면 대사 경계까지 넓힌다. Whisper 문장 끝 시간은 실제보다 조금 이를 때가 있어서
+        # 목소리 감지(VAD) 구간 경계에도 한 번 더 맞춘다.
+        for lo, hi in _speech_spans(job):
+            if lo < a < hi and a - lo <= 3.0:
+                a = max(0.0, lo - 0.1)
+            if lo < b < hi and hi - b <= 3.0:
+                b = min(job.duration, hi + 0.15)
+        if b - a >= MIN_CLIP_SEC:
+            fixed.append({"start": round(a, 2), "end": round(b, 2), "narration": clip["narration"]})
+    fixed.sort(key=lambda c: c["start"])
+
+    merged: list[dict] = []
+    for clip in fixed:
+        if merged and clip["start"] < merged[-1]["end"]:
+            prev = merged[-1]
+            prev["end"] = max(prev["end"], clip["end"])
+            prev["narration"] = f"{prev['narration']} {clip['narration']}".strip()
+        else:
+            merged.append(clip)
+    return merged
+
+
+def plan_dataframe(clips: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "start": c["start"],
+            "end": c["end"],
+            "narration": c["narration"],
+            "max_chars": int((c["end"] - c["start"]) * config.NARRATION_CHARS_PER_SECOND),
+        }
+        for c in clips
+    ])
+
+
+def plan_from_dataframe(job: Job, df: pd.DataFrame) -> list[dict]:
+    clips = []
+    for rec in df.to_dict("records"):
+        if pd.isna(rec.get("start")) or pd.isna(rec.get("end")):
+            continue
+        narration = "" if pd.isna(rec.get("narration")) else str(rec["narration"]).strip()
+        clips.append({"start": float(rec["start"]), "end": float(rec["end"]), "narration": narration})
+    return normalize_clips(job, clips)
+
+
+# ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
+
+
+def split_sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?…~])\s+", text.strip()) if s.strip()]
+
+
+def fit_clips(job: Job, clips: list[dict], speech_sec: list[float]) -> list[tuple[float, float]]:
+    """나레이션이 구간보다 길면 구간 끝을 늘리고 (다음 구간과 겹치지 않게), 모자라면 앞을 늘린다.
+
+    그래도 넘친 나레이션은 다음 구간에서 이어서 나오므로, 넘친 만큼 다음 구간이 더 길어야 한다.
+    """
+    spans = []
+    overflow = 0.0
+    for i, (clip, speech) in enumerate(zip(clips, speech_sec)):
+        a, b = clip["start"], clip["end"]
+        start_at = max(LEAD_SEC, overflow - TAIL_SEC + config.NARRATION_GAP) if overflow > 0 else LEAD_SEC
+        need = start_at + speech + TAIL_SEC if speech > 0 else overflow
+        limit = clips[i + 1]["start"] if i + 1 < len(clips) else job.duration
+        floor = spans[-1][1] if spans else 0.0
+        if b - a < need:  # 늘린 끝이 원본 대사 중간이면 대사가 끝나는 곳까지 (안 되면 시작 전까지)
+            b = _safe_cut(job, min(limit, a + need), a + MIN_CLIP_SEC, limit, prefer_later=True)
+        if b - a < need:
+            a = _safe_cut(job, max(floor, b - need), floor, b - MIN_CLIP_SEC, prefer_later=False)
+        spans.append((a, b))
+        overflow = max(0.0, need - (b - a))
+    return spans
+
+
+def make_short(
+    job: Job,
+    title: str,
+    clips: list[dict],
+    engine,
+    original_gain: float,
+    duck_gain: float,
+    layout: str,
+    font_size: int,
+    margin_percent: int,
+    color: str,
+    on_progress: Progress = _no_progress,
+) -> tuple[Path, list[dict]]:
+    if not clips:
+        raise RuntimeError("쇼츠에 넣을 구간이 없습니다.")
+
+    # 1) 문장마다 나레이션 음성을 만든다 (문장 단위라 자막 시간을 정확히 맞출 수 있음)
+    sentences = [split_sentences(c["narration"]) for c in clips]
+    total_sentences = sum(len(s) for s in sentences)
+    voices: list[list[np.ndarray]] = []
+    done = 0
+    for group in sentences:
+        wavs = []
+        for text in group:
+            wavs.append(mixing.load_speech(engine.synthesize_cached(text, job.dir / "tts")))
+            done += 1
+            on_progress(done, total_sentences)
+        voices.append(wavs)
+    speech_sec = [
+        sum(len(w) for w in wavs) / SR + config.NARRATION_GAP * max(0, len(wavs) - 1) for wavs in voices
+    ]
+
+    # 2) 나레이션 길이에 맞춰 구간을 늘린다
+    spans = fit_clips(job, clips, speech_sec)
+    total = sum(b - a for a, b in spans)
+
+    # 3) 나레이션을 배치한다. 앞 나레이션이 길어 넘치면 다음 나레이션은 그 뒤에 이어서 나온다.
+    narration = np.zeros(int(total * SR) + 1, np.float32)
+    rows, report = [], []
+    offset, cursor = 0.0, 0.0
+    for clip, (a, b), group, wavs, sec in zip(clips, spans, sentences, voices, speech_sec):
+        cursor = max(cursor, offset + LEAD_SEC)
+        first = cursor
+        for text, wav in zip(group, wavs):
+            mixing.place(narration, wav, cursor)
+            rows.append({"start": cursor, "end": cursor + len(wav) / SR, "text": text})
+            cursor += len(wav) / SR + config.NARRATION_GAP
+        end_sec = cursor - config.NARRATION_GAP if wavs else first
+        if not wavs:
+            status = "나레이션 없음"
+        elif end_sec > total:
+            status = f"{end_sec - total:.1f}초 잘림"
+        elif end_sec > offset + (b - a):
+            status = "다음 장면까지 이어짐"
+        elif (b - a) - (clip["end"] - clip["start"]) > 0.05:
+            status = "나레이션에 맞춰 늘림"
+        else:
+            status = "OK"
+        report.append({
+            "원본 구간": f"{a:.1f}~{b:.1f}초",
+            "쇼츠 위치": f"{offset:.1f}~{offset + b - a:.1f}초",
+            "나레이션(초)": round(sec, 1),
+            "상태": status,
+        })
+        offset += b - a
+    rows = [r for r in rows if r["start"] < total]
+    for r in rows:
+        r["end"] = min(r["end"], total)
+
+    # 4) 원본 소리를 같은 구간으로 잘라 이어 붙이고, 나레이션이 나올 때만 줄여서 섞는다
+    original = media.load_audio(job.audio, SR, 2)
+    original = np.concatenate([original[int(a * SR) : int(b * SR)] for a, b in spans])
+    sf.write(job.dir / "narration.wav", narration, SR)  # 확인용
+    mixed = job.dir / "mixed.wav"
+    mixing.mix(original, narration, original_gain, duck_gain, mixed)
+
+    # 5) 영상 자르고 잇기 → 세로 변환 + 자막
+    cut = job.dir / "cut.mp4"
+    media.cut_and_concat(job.video, spans, cut)
+
+    font_file, family = subtitles.find_korean_font()
+    fonts = job.dir / "fonts"
+    fonts.mkdir(exist_ok=True)
+    if not (fonts / font_file.name).exists():
+        shutil.copy(font_file, fonts / font_file.name)
+    w, h = config.OUTPUT_SIZE
+    cues = subtitles.build_cues(rows, subtitles.chars_per_line(font_size, w))
+    subtitles.write_ass(
+        cues, job.dir / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
+        title=title, title_end=total,
+    )
+    out = job.dir / f"shorts_{time.strftime('%H%M%S')}.mp4"
+    media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir)
+    return out, report
