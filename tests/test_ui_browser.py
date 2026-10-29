@@ -160,6 +160,25 @@ def test_full_flow(page, lake: Path, out: Path):
     page.screenshot(path=str(out / "result.png"), full_page=True)
 
 
+def test_restore(page):
+    """새로고침해도 작업을 이어서 할 수 있는가: 제목을 고치고 새로고침 → 최근 작업에서 열기."""
+    box = page.get_by_label("제목 (화면 위쪽)")
+    box.fill("새로고침 확인용 제목")
+    box.press("Enter")
+    page.wait_for_timeout(2000)
+    page.reload()
+    page.wait_for_selector(ZONE, timeout=60000)
+    check("새로고침하면 업로드 전 화면", page.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").count() == 0)
+    page.get_by_text("📂 최근 작업").click()
+    page.get_by_role("button", name="열기").first.click()
+    page.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").wait_for(timeout=60000)
+    page.wait_for_timeout(1500)
+    check("최근 작업 열기 → 분석 다시 안 하고 2단계로", page.get_by_role("button", name="1단계 · 다시 분석 + 쇼츠 구성").count() == 1)
+    check("고친 제목 유지", page.get_by_label("제목 (화면 위쪽)").input_value() == "새로고침 확인용 제목",
+          page.get_by_label("제목 (화면 위쪽)").input_value())
+    check("만든 쇼츠 유지", page.get_by_role("button", name="⬇️ 쇼츠 다운로드").count() == 1)
+
+
 def main():
     work = Path(tempfile.mkdtemp(prefix="ui_test_"))
     lake = make_video(work, "lake", WALL / "ThemeC/img28.jpg", 14,
@@ -185,6 +204,7 @@ def main():
             test_drag_drop(page, lake, art)
             if not QUICK:
                 test_full_flow(page, lake, work)
+                test_restore(page)
             browser.close()
     finally:
         server.terminate()

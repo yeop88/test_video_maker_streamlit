@@ -6,14 +6,13 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, llm, media, pipeline, presets, tts
+from shorts_maker import config, llm, media, pipeline, presets, project, tts
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
 ENGINE_LABELS = {"edge": "Edge TTS (기본 목소리, 인터넷 필요)", "chatterbox": "Chatterbox (GPU, 목소리 샘플 사용 가능)"}
 LAYOUT_LABELS = {"blur": "블러 배경 (가로 영상·글자 많은 화면 추천)", "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)"}
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
-STATE_KEYS = ("job", "title", "plan", "result")
 VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -172,58 +171,106 @@ style_label, target_sec = ss.style, ss.target_sec
 show_title, font_size, margin_percent, color = ss.show_title, ss.font_size, ss.margin_percent, ss.color
 original_gain, duck_gain = ss.original_gain, ss.duck_gain
 
-# ───────────────────────── 업로드 ─────────────────────────
+
+# ───────────────────────── 작업 열기 (새로고침해도 이어서) ─────────────────────────
 st.title("🎬 AI 쇼츠 나레이션 스튜디오")
 st.caption(
     "영상을 올리면 AI가 **장면과 대사를 이해**해서 하이라이트 구간을 고르고, "
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다."
 )
 
+
+def set_project(p: project.Project, message: str = "") -> None:
+    """작업을 화면 상태로 불러온다. 표 편집 상태는 새 작업 기준으로 다시 만든다."""
+    ss.project = p
+    ss.pop("editor", None)
+    ss.plan = pipeline.plan_dataframe(p.shorts[0]["clips"]) if p.shorts else None
+    if message:
+        ss.flash = message
+
+
+def open_recent(folder: Path) -> None:
+    try:
+        set_project(project.load(folder), f"'{folder.name}' 작업을 불러왔습니다.")
+    except (OSError, ValueError, KeyError) as e:
+        ss.flash = f"작업을 불러오지 못했습니다: {e}"
+    ss.upload_id = None
+
+
+def close_project() -> None:
+    ss.pop("project", None)
+    ss.pop("plan", None)
+    ss.pop("editor", None)
+
+
+recent_items = project.recent()
+with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
+    if not recent_items:
+        st.caption("아직 작업이 없습니다.")
+    for item in recent_items[:10]:
+        col_name, col_info, col_open = st.columns([4, 3, 1])
+        icon = "✨" if item["kind"] == "ai" else "📼"
+        col_name.markdown(f"{icon} **{item['name']}**")
+        status = "분석 완료" if item["analyzed"] else "분석 전"
+        col_info.caption(f"{item['updated']} · {status} · 만든 쇼츠 {item['results']}개")
+        col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
+
 # 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*)
 st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>")
 components.html(f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", height=0)
 with st.container(key="video_drop"):
     uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES)
-if uploaded is None:
+
+if uploaded is not None:
+    data = uploaded.getvalue()
+    upload_id = hashlib.sha1(data).hexdigest()[:12]
+    if ss.get("upload_id") != upload_id:  # 새로 올린 영상 (같은 영상이면 이전 작업을 그대로 불러옴)
+        ss.upload_id = upload_id
+        opened, restored = project.open_upload(upload_id, uploaded.name, data)
+        set_project(opened, "이전에 작업한 영상이라 분석 결과와 구성을 불러왔습니다." if restored and opened.job else "")
+
+flash = ss.pop("flash", None)
+if flash:
+    st.toast(flash)
+
+proj: project.Project | None = ss.get("project")
+if proj is None:
     st.info(f"영상을 올리면 시작합니다. 긴 영상은 분석할 구간을 {config.MAX_SOURCE_SECONDS // 60}분 이하로 골라 주세요.")
     st.stop()
 
-data = uploaded.getvalue()
-upload_id = hashlib.sha1(data).hexdigest()[:12]
-if st.session_state.get("upload_id") != upload_id:  # 새 영상이면 이전 결과 초기화
-    for key in STATE_KEYS:
-        st.session_state.pop(key, None)
-    source = pipeline.save_upload(upload_id, uploaded.name, data)
-    st.session_state.update(upload_id=upload_id, source=source, info=media.probe(source))
 
-source: Path = st.session_state.source
-info: media.VideoInfo = st.session_state.info
+@st.cache_data(show_spinner=False)
+def probe(path: str) -> media.VideoInfo:
+    return media.probe(Path(path))
 
+
+source = proj.source_path
+info = probe(str(source))
 col_video, col_options = st.columns([1, 2])
 with col_video:
-    st.video(data)
+    st.video(str(source))
 with col_options:
-    st.markdown(f"**길이** {info.duration:.1f}초 · **해상도** {info.width}×{info.height}" + ("" if info.has_audio else " · 소리 없음"))
+    head, close = st.columns([5, 1])
+    head.markdown(f"**{proj.name}** · {info.duration:.1f}초 · {info.width}×{info.height}" + ("" if info.has_audio else " · 소리 없음"))
+    close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
     total = round(info.duration, 1)
     start, end = st.slider("분석할 구간 (초)", 0.0, total, (0.0, min(total, float(config.MAX_SOURCE_SECONDS))), 0.5)
     if end - start > config.MAX_SOURCE_SECONDS:
         st.warning(f"{config.MAX_SOURCE_SECONDS // 60}분이 넘으면 분석이 오래 걸리고 장면 설명이 듬성듬성해집니다.")
-    run_analyze = st.button("1단계 · 영상 분석 + 쇼츠 구성", type="primary", disabled=llm_model is None)
+    label = "1단계 · 다시 분석 + 쇼츠 구성" if proj.job else "1단계 · 영상 분석 + 쇼츠 구성"
+    run_analyze = st.button(label, type="primary", disabled=llm_model is None)
 
 
-def make_plan(job: pipeline.Job) -> None:
-    title, clips = pipeline.plan(job, llm_model, target_sec, llm.STYLES[style_label])
+def make_plan(p: project.Project) -> None:
+    title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label])
     if not clips:
         raise RuntimeError("쓸 만한 구간을 고르지 못했습니다. 다시 구성하거나 쇼츠 길이를 바꿔 보세요.")
-    st.session_state.title = title
-    st.session_state.plan = pipeline.plan_dataframe(clips)
-    st.session_state.pop("result", None)
-    st.session_state.pop("editor", None)
+    p.shorts = [{"id": project.new_id(), "title": title, "clips": clips}]
+    project.save(p)
+    set_project(p)
 
 
 if run_analyze:
-    for key in STATE_KEYS:
-        st.session_state.pop(key, None)
     with st.status("영상을 이해하는 중...", expanded=True) as status:
         try:
             st.write("✂️ 구간 자르기, 오디오 추출")
@@ -237,16 +284,17 @@ if run_analyze:
             pipeline.describe_frames(
                 job, llm_model, on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 장면")
             )
+            proj.job = job
+            project.save(proj)  # 구성에서 실패해도 분석 결과는 남긴다
             st.write("🧠 하이라이트 구간 고르기 + 나레이션 대본 쓰기")
-            st.session_state.job = job
-            make_plan(job)
+            make_plan(proj)
             status.update(label="1단계 완료", state="complete", expanded=False)
         except Exception as e:
             status.update(label="1단계 실패", state="error")
             st.exception(e)
             st.stop()
 
-job: pipeline.Job | None = st.session_state.get("job")
+job = proj.job
 if job is None:
     st.stop()
 
@@ -259,20 +307,30 @@ st.divider()
 st.subheader("2단계 · 쇼츠 구성과 나레이션 확인")
 st.caption(
     "AI가 고른 원본 구간과 구간별 나레이션입니다. 시간과 대본을 고치거나, 행을 추가·삭제할 수 있습니다. "
-    "나레이션이 구간보다 길면 구간을 자동으로 늘립니다. **권장 글자 수**는 구간 길이 기준입니다."
+    "나레이션이 구간보다 길면 구간을 자동으로 늘립니다. **권장 글자 수**는 구간 길이 기준입니다. 고친 내용은 바로 저장됩니다."
 )
+if not proj.shorts:
+    if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
+        with st.spinner("구성하는 중..."):
+            make_plan(proj)
+        st.rerun()
+    st.stop()
+short = proj.shorts[0]
+if ss.get("plan") is None:
+    ss.plan = pipeline.plan_dataframe(short["clips"])
+
 col_title, col_replan = st.columns([3, 1])
 with col_title:
-    title = st.text_input("제목 (화면 위쪽)", value=st.session_state.get("title", ""), disabled=not show_title)
+    title = st.text_input("제목 (화면 위쪽)", value=short["title"], disabled=not show_title, key=f"title_{short['id']}")
 with col_replan:
     st.write("")
     if st.button("🔄 구성 다시 만들기", help="같은 분석 결과로 구간과 나레이션을 다시 만듭니다. 사이드바의 말투·길이가 반영됩니다."):
         with st.spinner("다시 구성하는 중..."):
-            make_plan(job)
+            make_plan(proj)
         st.rerun()
 
 edited = st.data_editor(
-    st.session_state.plan,
+    ss.plan,
     column_config={
         "start": st.column_config.NumberColumn("시작(초)", step=0.1, format="%.1f", width="small", min_value=0.0),
         "end": st.column_config.NumberColumn("끝(초)", step=0.1, format="%.1f", width="small", min_value=0.0),
@@ -285,6 +343,10 @@ edited = st.data_editor(
     key="editor",
 )
 clips = pipeline.plan_from_dataframe(job, edited)
+if clips != short["clips"] or title != short["title"]:  # 고친 내용을 바로 저장 (새로고침해도 남음)
+    short.update(clips=clips, title=title)
+    project.save(proj)
+
 col_info, col_renarrate = st.columns([3, 1])
 with col_info:
     st.caption(f"구간 {len(clips)}개 · 원본 구간 합계 {sum(c['end'] - c['start'] for c in clips):.1f}초")
@@ -294,10 +356,9 @@ with col_renarrate:
         help="표의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
     ):
         with st.spinner("나레이션을 쓰는 중..."):
-            st.session_state.plan = pipeline.plan_dataframe(
-                pipeline.narrate(job, clips, llm_model, llm.STYLES[style_label])
-            )
-            st.session_state.pop("editor", None)
+            short["clips"] = pipeline.narrate(job, clips, llm_model, llm.STYLES[style_label])
+            project.save(proj)
+            set_project(proj)
         st.rerun()
 
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
@@ -315,27 +376,33 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
                 job, title if show_title else "", clips, engine, original_gain, duck_gain,
                 ss.layout, font_size, margin_percent, color,
                 on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 문장"),
+                out_dir=proj.dir / "results",
             )
-            st.session_state.result = {"video": video, "report": report}
+            proj.results.insert(0, {
+                "id": project.new_id(), "short_id": short["id"], "title": title,
+                "video": str(video), "report": report, "created": project.now(),
+            })
+            project.save(proj)
             status.update(label="완성!", state="complete", expanded=False)
         except Exception as e:
             status.update(label="만들기 실패", state="error")
             st.exception(e)
 
 # ───────────────────────── 결과 ─────────────────────────
-result = st.session_state.get("result")
-if result:
+if proj.results:
+    result = proj.results[0]
     st.divider()
     st.subheader("결과")
     col_out, col_report = st.columns([1, 2])
     with col_out:
-        st.video(str(result["video"]))
+        st.video(result["video"])
         st.download_button(
             "⬇️ 쇼츠 다운로드", data=Path(result["video"]).read_bytes(),
-            file_name=f"{Path(uploaded.name).stem}_shorts.mp4", mime="video/mp4", type="primary",
+            file_name=f"{Path(proj.name).stem}_shorts.mp4", mime="video/mp4", type="primary",
         )
     with col_report:
         report = result["report"]
+        st.caption(f"{result['created']} 만듦")
         st.dataframe(report, hide_index=True, width="stretch")
         if any("잘림" in r["상태"] or "이어짐" in r["상태"] for r in report):
             st.warning("나레이션이 구간보다 길어서 다음 장면으로 넘어가거나 잘린 곳이 있습니다. 2단계에서 대본을 줄이거나 구간을 늘려 보세요.")

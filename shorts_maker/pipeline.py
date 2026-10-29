@@ -273,7 +273,9 @@ def make_short(
     margin_percent: int,
     color: str,
     on_progress: Progress = _no_progress,
+    out_dir: Path | None = None,
 ) -> tuple[Path, list[dict]]:
+    """out_dir에 결과를 저장한다 (기본은 job.dir). 다시 분석해도 지워지지 않게 작업 폴더의 results/를 쓴다."""
     if not clips:
         raise RuntimeError("쇼츠에 넣을 구간이 없습니다.")
 
@@ -352,6 +354,8 @@ def make_short(
         cues, job.dir / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
         title=title, title_end=total,
     )
-    out = job.dir / f"shorts_{time.strftime('%H%M%S')}.mp4"
+    out_dir = out_dir or job.dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"shorts_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     media.render_short(cut, mixed, "subs.ass", "fonts", out, layout, (w, h), cwd=job.dir)
     return out, report
