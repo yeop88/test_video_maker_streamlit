@@ -21,6 +21,8 @@ RANGES = {
     "exaggeration": (0.25, 1.5, 0.05),
     "original_gain": (0.0, 1.0, 0.05),
     "duck_gain": (0.0, 1.0, 0.05),
+    "bgm_gain": (0.0, 1.0, 0.05),
+    "bgm_duck": (0.0, 1.0, 0.05),
     "font_size": (48, 110, 2),
     "margin_percent": (5, 50, 1),
 }
@@ -42,6 +44,9 @@ DEFAULTS = {
     "exaggeration": 0.5,
     "original_gain": 0.8,
     "duck_gain": 0.2,
+    "bgm_track": "",  # 배경음악 보관함의 곡 ID (없음 = "")
+    "bgm_gain": 0.25,
+    "bgm_duck": 0.4,
     "layout": "blur",
     "show_title": True,
     "font_size": 72,

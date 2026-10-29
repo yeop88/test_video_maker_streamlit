@@ -159,6 +159,23 @@ def test_cards(page):
     check("구간 삭제", cards.count() == n and "추가한 구간" not in card_texts(page), card_texts(page))
 
 
+def test_music_upload(page, song: Path):
+    """사이드바 배경음악: 음악 올리기 → 보관함에 넣기 → 선택되고 미리 듣기가 보임."""
+    open_app(page)
+    side = page.locator('[data-testid="stSidebar"]')
+    side.get_by_text("음악 올리기").click()
+    side.locator('[data-testid="stFileUploaderDropzoneInput"]').last.set_input_files(str(song))
+    side.get_by_role("button", name="보관함에 넣기").wait_for(timeout=30000)
+    page.wait_for_timeout(1500)
+    side.get_by_role("button", name="보관함에 넣기").click()
+    page.wait_for_timeout(2500)
+    combo = side.get_by_role("combobox", name="배경음악")
+    check("올린 음악이 배경음악으로 선택됨", song.stem in combo.inner_text() or song.stem in side.inner_text(),
+          side.inner_text()[:0])
+    check("배경음악 미리 듣기", side.locator("audio").count() >= 1)
+    check("배경음악 크기 조절", side.get_by_text("배경음악 크기", exact=True).count() == 1)
+
+
 def test_full_flow(page, lake: Path, out: Path):
     open_app(page)
     drag(page, 700, 140, lake)
@@ -247,6 +264,8 @@ def main():
     lake = make_video(work, "lake", WALL / "ThemeC/img28.jpg", 14,
                       "안녕하세요. 오늘은 산속 호숫가로 아침 산책을 나왔어요. 물이 거울처럼 잔잔하고 공기가 정말 맑네요.")
     art = make_video(work, "art", WALL / "ThemeB/img24.jpg", 6)
+    song = work / "test_song.mp3"
+    media.run_ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-ac", "2", str(song)])
 
     log = open(work / "server.log", "w", encoding="utf-8")  # 서버가 죽으면 원인을 볼 수 있게
     server = subprocess.Popen(
@@ -266,6 +285,7 @@ def main():
             browser = p.chromium.launch(channel="msedge", headless=True)
             page = browser.new_page(viewport={"width": 1400, "height": 1000}, accept_downloads=True)
             test_drag_drop(page, lake, art)
+            test_music_upload(page, song)
             if not QUICK:
                 test_full_flow(page, lake, work)
                 test_restore(page)

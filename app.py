@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, llm, media, pipeline, presets, project, tts
+from shorts_maker import config, llm, media, music, pipeline, presets, project, tts
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -66,6 +66,9 @@ def apply_preset(name: str) -> None:
         ss.preset_msg = ("error", str(e))
         return
     notes = [f"설정 {', '.join(dropped)}은(는) 올바르지 않아 기본값을 썼습니다"] if dropped else []
+    if values["bgm_track"] and not music.track_path(values["bgm_track"]):
+        notes.append("프리셋의 배경음악이 보관함에 없어 배경음악 없이 둡니다")
+        values["bgm_track"] = ""
     if models and values["llm_model"] not in models:
         notes.append(f"LLM '{values['llm_model']}'이(가) 설치되어 있지 않아 지금 모델을 그대로 둡니다")
         values["llm_model"] = ss.llm_model
@@ -83,6 +86,17 @@ def save_preset() -> None:
     ss.preset_loaded = (name, current_settings())
     ss.preset_select = name
     ss.preset_msg = ("success", f"'{name}' 프리셋을 {'덮어썼습니다' if existed else '저장했습니다'}.")
+
+
+def add_music_upload() -> None:
+    file = ss.get("bgm_upload")
+    if file is None:
+        return
+    try:
+        ss.bgm_track = music.add_upload(file.name, file.getvalue())
+        ss.preset_msg = ("success", f"'{file.name}'을(를) 배경음악 보관함에 넣었습니다.")
+    except RuntimeError as e:
+        ss.preset_msg = ("error", str(e))
 
 
 def delete_preset(name: str) -> None:
@@ -159,6 +173,24 @@ with st.sidebar:
         "나레이션 중 원본 소리 크기", "duck_gain",
         help="나레이션이 나오는 동안 원본 소리를 이 비율로 줄입니다 (원본 소리 크기에 곱해짐).",
     )
+
+    st.markdown("**🎵 배경음악**")
+    tracks = {t["id"]: t for t in music.list_tracks()}
+    if ss.bgm_track not in tracks:
+        ss.bgm_track = ""
+    st.selectbox(
+        "배경음악", [""] + list(tracks), key="bgm_track", label_visibility="collapsed",
+        format_func=lambda i: "없음" if not i else
+        f"{'✨' if tracks[i]['source'] == 'ai' else '📁'} {tracks[i]['name']} ({tracks[i]['seconds']}초)",
+    )
+    if ss.bgm_track:
+        st.audio(str(tracks[ss.bgm_track]["path"]))
+        setting_slider("배경음악 크기", "bgm_gain")
+        setting_slider("나레이션 중 배경음악 크기", "bgm_duck", help="나레이션이 나오는 동안 배경음악을 이 비율로 줄입니다.")
+    with st.expander("음악 올리기"):
+        st.file_uploader("음악 파일", type=music.MUSIC_TYPES, key="bgm_upload", label_visibility="collapsed")
+        st.button("보관함에 넣기", on_click=add_music_upload, disabled=ss.get("bgm_upload") is None, width="stretch",
+                  help="올린 음악은 workdir/music/에 저장되어 다른 작업에서도 고를 수 있습니다. 권리가 있는 음악만 쓰세요.")
 
     st.subheader("화면 / 자막")
     st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
@@ -447,7 +479,9 @@ def settings_summary() -> str:
         voice = f"Chatterbox {'목소리 샘플' if voice_sample else '기본 목소리'}"
     layout = {"blur": "블러 배경", "crop": "가운데 크롭"}.get(ss.layout, ss.layout)
     subs = "단어 강조 자막" if ss.subtitle_style == "karaoke" else "기본 자막"
-    return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f}"
+    track = next((t for t in music.list_tracks() if t["id"] == ss.bgm_track), None)
+    bgm = f"배경음악 {track['name']} {ss.bgm_gain:.2f}" if track else "배경음악 없음"
+    return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f} · {bgm}"
 
 
 # ───────────────────────── 3단계: 쇼츠 만들기 ─────────────────────────
@@ -467,6 +501,7 @@ if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disab
                 on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 문장"),
                 out_dir=proj.dir / "results",
                 subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
+                music_path=music.track_path(ss.bgm_track), music_gain=ss.bgm_gain, music_duck=ss.bgm_duck,
             )
             proj.results.insert(0, {
                 "id": project.new_id(), "short_id": short["id"], "title": title,

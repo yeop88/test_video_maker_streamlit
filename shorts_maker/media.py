@@ -58,6 +58,17 @@ def probe(path: Path) -> VideoInfo:
     )
 
 
+def probe_audio_seconds(path: Path) -> float:
+    """오디오 파일 길이(초). 영상 스트림이 없어도 된다."""
+    ensure_ffmpeg()
+    proc = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                          capture_output=True)
+    try:
+        return float(proc.stdout.decode().strip())
+    except ValueError:
+        raise RuntimeError("음악 파일을 읽을 수 없습니다. 손상되었거나 지원하지 않는 형식입니다.") from None
+
+
 def trim(src: Path, dst: Path, start: float, end: float) -> None:
     """정확한 구간으로 자르기 위해 다시 인코딩한다."""
     run_ffmpeg([

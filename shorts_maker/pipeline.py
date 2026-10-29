@@ -17,13 +17,14 @@ from typing import Callable
 import numpy as np
 import soundfile as sf
 
-from . import config, llm, media, mixing, subtitles
+from . import config, llm, media, mixing, music, subtitles
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
 MAX_HOLD_SEC = 4.0  # 나레이션이 원본 끝을 넘을 때 마지막 화면을 멈춰 늘리는 최대 길이
 TAIL_SEC = 0.4  # 나레이션이 끝나고 다음 구간으로 넘어가기까지 쉼
 MIN_CLIP_SEC = 1.5
+MAX_CLIP_SEC = 15.5  # 이보다 긴 구간은 나눈다 (긴 구간 하나에 항목이 여러 개면 나레이션이 화면과 어긋나기 쉬움)
 
 
 @dataclass
@@ -150,7 +151,26 @@ def plan(job: Job, model: str, target_sec: float, style: str) -> tuple[str, list
             c["end"] += grow_end
             c["start"] -= min(max(0.0, before), share - grow_end)
         clips = normalize_clips(job, clips)
-    return selection.title, narrate(job, clips, model, style)
+    return selection.title, narrate(job, split_long_clips(job, clips), model, style)
+
+
+def split_long_clips(job: Job, clips: list[dict]) -> list[dict]:
+    """MAX_CLIP_SEC보다 긴 구간을 가운데에서 가장 가까운 대사 사이(말이 없는 곳)에서 나눈다.
+    LLM에게 나누라고 다시 요청해도 긴 구간을 고르는 일이 있어서 코드로 마무리한다."""
+    out = []
+    queue = list(clips)
+    while queue:
+        clip = queue.pop(0)
+        a, b = clip["start"], clip["end"]
+        if b - a <= MAX_CLIP_SEC:
+            out.append(clip)
+            continue
+        # 후보: 문장 사이 빈틈의 가운데. 없으면 그냥 가운데
+        spans = sorted(_sentence_spans(job))
+        gaps = [(x[1] + y[0]) / 2 for x, y in zip(spans, spans[1:]) if a + 3 < (x[1] + y[0]) / 2 < b - 3]
+        cut = min(gaps, key=lambda g: abs(g - (a + b) / 2)) if gaps else (a + b) / 2
+        queue[:0] = [{**clip, "end": round(cut, 2)}, {**clip, "start": round(cut, 2), "uid": clip.get("uid", "") + "b"}]
+    return out
 
 
 def narrate(job: Job, clips: list[dict], model: str, style: str) -> list[dict]:
@@ -276,6 +296,9 @@ def make_short(
     out_dir: Path | None = None,
     subtitle_style: str = "plain",
     highlight_color: str = "#FFE600",
+    music_path: Path | None = None,
+    music_gain: float = 0.25,
+    music_duck: float = 0.4,
 ) -> tuple[Path, list[dict]]:
     """out_dir에 결과를 저장한다 (기본은 job.dir). 다시 분석해도 지워지지 않게 작업 폴더의 results/를 쓴다."""
     if not clips:
@@ -354,7 +377,10 @@ def make_short(
     original = np.concatenate([original[int(a * SR) : int(b * SR)] for a, b in spans])
     sf.write(job.dir / "narration.wav", narration, SR)  # 확인용
     mixed = job.dir / "mixed.wav"
-    mixing.mix(original, narration, original_gain, duck_gain, mixed)
+    bed = music.bed(music_path, total) if music_path else None
+    music_track = mixing.mix(original, narration, original_gain, duck_gain, mixed, bed, music_gain, music_duck)
+    if music_track is not None:
+        sf.write(job.dir / "music.wav", music_track, SR)  # 확인용 (섞인 배경음악만)
 
     # 5) 영상 자르고 잇기 → 세로 변환 + 자막
     cut = job.dir / "cut.mp4"

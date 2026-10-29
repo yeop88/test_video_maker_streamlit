@@ -16,7 +16,7 @@ import soundfile as sf
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from shorts_maker import asr, config, llm, media, pipeline, subtitles, tts
+from shorts_maker import asr, config, llm, media, music, pipeline, subtitles, tts
 from shorts_maker.korean_numbers import number_values
 import edge_tts
 
@@ -50,6 +50,7 @@ TESTS = [
     dict(
         name="T2_english_sleep_tips_slides",
         size=(1280, 720), bgm=0.0, target=25, style="정보 전달 (차분한 설명)", engine="chatterbox", layout="crop",
+        music=True,  # 8초짜리 배경음악을 올려서 반복·더킹 확인
         scenes=[
             (WALL.parent / "Screen/img101.jpg", "3 Tips for Better Sleep",
              [("en-US-JennyNeural", "Struggling to fall asleep at night?"),
@@ -245,8 +246,16 @@ for t in TESTS:
                 "ko-KR-InJoonNeural").save(str(sample)))
             reference = pipeline.save_voice_sample(sample.name, sample.read_bytes())
         engine = tts.ChatterboxEngine(chatterbox, reference, 0.5)
+    music_path = None
+    if t.get("music"):
+        tt = np.arange(int(8 * SR)) / SR  # 0.5초마다 바뀌는 아르페지오 (C-E-G-E)
+        freq = np.array([523.25, 659.25, 783.99, 659.25])[(tt * 2).astype(int) % 4]
+        song = (0.3 * np.sin(2 * np.pi * freq * tt)).astype(np.float32)
+        sf.write(folder / "song.wav", np.stack([song, song], 1), SR)
+        music_path = music.track_path(music.add_upload("song.wav", (folder / "song.wav").read_bytes()))
     out, report = pipeline.make_short(job, title, clips, engine, 0.8, 0.2, t["layout"], 72, 20, "#FFFFFF",
-                                      subtitle_style=t.get("subtitles", "plain"), highlight_color="#FFE600")
+                                      subtitle_style=t.get("subtitles", "plain"), highlight_color="#FFE600",
+                                      music_path=music_path, music_gain=0.3, music_duck=0.4)
     timings["make_short"] = round(time.time() - t2, 1)
 
     oi = media.probe(out)
@@ -306,6 +315,25 @@ for t in TESTS:
         "subs_within_video": bool(cues) and cues[-1][1] <= oi.duration + 0.05,
         "no_narration_cut": r["narration_cut"] == 0,
     }
+    if t.get("music"):
+        track = media.load_audio(job.dir / "music.wav", SR, 1)[:, 0]
+        m = min(len(track), len(mixed))
+        r["music_seconds"] = round(len(track) / SR, 2)
+        r["music_in_output"] = round(float(np.dot(mixed[:m], track[:m]) / max(1e-9, np.dot(track[:m], track[:m]))), 2)
+        last = track[-int(4 * SR): -int(2 * SR)]  # 끝 페이드 직전: 8초 곡이 반복되어 이어지는지
+        r["music_tail_rms"] = round(rms(last), 4)
+        # 나레이션 바깥은 나레이션에서 0.8초 이상 떨어진 곳만 (문장 사이 짧은 쉼은 계속 줄여 두므로 제외),
+        # 처음 1초·끝 2초(페이드)도 제외한다
+        near = np.convolve(mask[:len(track)].astype(float), np.ones(int(1.6 * SR)), mode="same") > 0
+        away = ~near
+        away[: int(1 * SR)] = False
+        away[-int(2 * SR):] = False
+        inside = mask[:len(track)].copy()
+        inside[-int(2 * SR):] = False
+        r["music_duck_ratio"] = round(rms(track[inside]) / max(1e-9, rms(track[away])), 3) if away.sum() > SR else None
+        checks["music_full_length"] = abs(r["music_seconds"] - oi.duration) < 0.3 and r["music_tail_rms"] > 0.01
+        checks["music_in_output"] = 0.7 <= r["music_in_output"] <= 1.3
+        checks["music_ducked(<0.55)"] = r["music_duck_ratio"] is not None and r["music_duck_ratio"] < 0.55
     if t.get("subtitles") == "karaoke":
         # 단어 강조: 낱말마다 이벤트 하나, 시간 순서대로, 강조된 낱말 수 = 나레이션 낱말 수
         events = [c for c in cues if r"\c&H" in c[2]]

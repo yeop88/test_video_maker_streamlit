@@ -56,14 +56,34 @@ def duck_envelope(narration: np.ndarray, duck_gain: float, ramp_sec: float = 0.1
     return np.repeat(gain, frame)[: len(narration)].astype(np.float32)
 
 
-def mix(original: np.ndarray, narration: np.ndarray, original_gain: float, duck_gain: float, out_path: Path) -> None:
-    """original은 (샘플, 2) 스테레오, narration은 모노. 길이는 narration에 맞춘다."""
+def mix(
+    original: np.ndarray,
+    narration: np.ndarray,
+    original_gain: float,
+    duck_gain: float,
+    out_path: Path,
+    music: np.ndarray | None = None,
+    music_gain: float = 0.25,
+    music_duck: float = 0.4,
+) -> np.ndarray | None:
+    """original·music은 (샘플, 2) 스테레오, narration은 모노. 길이는 narration에 맞춘다.
+
+    원본 소리와 배경음악은 나레이션이 나올 때만 각자의 비율로 줄인다. 섞은 배경음악 트랙(확인용)을 돌려준다.
+    """
     n = len(narration)
     if len(original) < n:
         original = np.pad(original, ((0, n - len(original)), (0, 0)))
     env = duck_envelope(narration, duck_gain) * original_gain
     out = original[:n] * env[:, None] + narration[:, None]
+    music_track = None
+    if music is not None and len(music):
+        music = np.pad(music, ((0, max(0, n - len(music))), (0, 0)))[:n]
+        music_track = music * (duck_envelope(narration, music_duck) * music_gain)[:, None]
+        out = out + music_track
     peak = float(np.abs(out).max()) if out.size else 0.0
     if peak > 0.98:  # 클리핑 방지
         out *= 0.98 / peak
+        if music_track is not None:
+            music_track = music_track * (0.98 / peak)
     sf.write(out_path, out, SR)
+    return music_track
