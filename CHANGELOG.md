@@ -5,6 +5,12 @@
 ## [Unreleased]
 
 ### Added
+- **AI 생성 엔진** (`gen/worker.py`, `shorts_maker/generate.py`): 생성 전용 가상환경(`.venv-gen`, [requirements-gen.txt](requirements-gen.txt))에서 별도 프로세스로 돌립니다.
+  - 장면 이미지: SDXL-Turbo로 세로 이미지를 만들고 천천히 확대·이동하는 1080×1920 클립으로 바꿉니다.
+  - 장면 영상: LTX-Video로 약 4초 세로 영상(512×768)을 만듭니다.
+  - 배경음악: MusicGen으로 최대 30초 음악을 만듭니다.
+  - 생성 전 Ollama 모델을 GPU에서 내리고, 결과는 `workdir/gen_cache/`에 캐시합니다.
+  - 테스트 [tests/test_generate.py](tests/test_generate.py) (9개 검사: 크기·길이·캐시·실제 움직임·음악 크기).
 - **작업 이어서 하기** (`shorts_maker/project.py`): 작업마다 분석 결과, 구성·나레이션, 만든 쇼츠를 `workdir/<작업>/state.json`에 저장합니다.
   - 새로고침하거나 앱을 다시 켜도 「📂 최근 작업」에서 열면 분석을 다시 하지 않고 이어서 할 수 있습니다.
   - 같은 영상을 다시 올리면 이전 작업을 자동으로 불러옵니다.

@@ -62,6 +62,26 @@ streamlit run app.py
 
 처음 실행할 때는 Whisper(와 Chatterbox를 고르면 Chatterbox) 모델을 내려받느라 몇 분 걸립니다.
 
+### AI 생성 기능 설치 (장면 이미지·영상, 배경음악)
+
+AI 장면·음악 생성은 앱과 **다른 가상환경**(`.venv-gen`)에서 별도 프로세스로 돌립니다.
+chatterbox-tts가 `diffusers==0.29.0`에 고정되어 있는데, 그 버전은 앱의 transformers 5.x와 함께 쓸 수 없기 때문입니다.
+이렇게 하면 생성이 끝날 때 GPU 메모리도 바로 돌려받습니다. 설치하지 않으면 AI 생성 메뉴만 꺼지고 나머지는 그대로 쓸 수 있습니다.
+
+```bash
+python -m venv .venv-gen
+.venv-gen\Scripts\python -m pip install -r requirements-gen.txt
+.venv\Scripts\python tests\test_generate.py     # 확인 (처음에는 모델 내려받기로 오래 걸림)
+```
+
+| 기능 | 모델 | 내려받기 | 걸리는 시간 (RTX 4080 SUPER) | 라이선스 |
+|---|---|---|---|---|
+| 장면 이미지 → 움직임 클립 | [stabilityai/sdxl-turbo](https://huggingface.co/stabilityai/sdxl-turbo) (fp16) | 약 7GB | 장면당 몇 초 | 비상업 연구용 |
+| 장면 영상 (약 4초) | [Lightricks/LTX-Video](https://huggingface.co/Lightricks/LTX-Video) | 약 28GB | 장면당 1분 안팎 | LTX 오픈 가중치 (비상업 무료) |
+| 배경음악 (최대 30초) | [facebook/musicgen-small](https://huggingface.co/facebook/musicgen-small) | 약 2GB | 10초 곡에 약 25초 | CC-BY-NC 4.0 |
+
+생성 전에 Ollama 모델을 GPU에서 내리고(다음 요청 때 다시 올라옴), 결과는 `workdir/gen_cache/`에 저장해 같은 요청은 다시 만들지 않습니다.
+
 ## 사용 방법
 
 1. **업로드**: 영상 파일을 **화면 아무 곳에나 끌어다 놓거나** Upload 버튼으로 올리고, 분석할 구간을 고릅니다 (15분 이하, MP4·MOV·WEBM·MKV·M4V·AVI). 작업은 자동으로 저장되어, 새로고침해도 「📂 최근 작업」에서 이어서 할 수 있습니다. 같은 영상을 다시 올려도 이전 작업을 불러옵니다.
