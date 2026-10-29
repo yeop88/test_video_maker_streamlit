@@ -154,6 +154,8 @@ def select_clips(model: str, timeline: str, duration: float, target_sec: float, 
             problems.append(f"핵심 내용 {', '.join(missing)}이(가) 어느 구간에도 없습니다. 그 내용이 나오는 구간을 넣으세요.")
         if FOREIGN_SCRIPT.search(sel.title):
             problems.append("제목에 한자나 일본어 문자가 있습니다. 한글로만 쓰세요.")
+        if len(re.findall(r"[가-힣]", sel.title)) < 4:  # 화면 확인 중 제목이 "3" 하나만 나온 적이 있음
+            problems.append(f"제목 '{sel.title}'이(가) 너무 짧습니다. 영상 내용을 담은 한글 제목(4~15자)을 쓰세요.")
         return problems
 
     sel = _ask_until_ok(model, messages, Selection, check, attempts)
@@ -196,11 +198,26 @@ def write_narrations(model: str, items: list[dict], style: str, attempts: int = 
             if invented:
                 nums = ", ".join(str(n) for n in sorted(invented))
                 problems.append(f"id {item['id']}의 숫자 {nums}는 그 구간 excerpt에 없습니다. 지어내지 마세요.")
+        # "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서 표현이 건너뛰면 그 항목이 빠진 것
+        orders = sorted({n for i in sorted(got) for n in ordinals(got[i])})
+        skipped = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]
+        if skipped:
+            names = ", ".join(f"{n}번째" for n in skipped)
+            problems.append(f"순서 표현에서 {names} 항목이 빠졌습니다. 그 내용이 나오는 구간 나레이션에 넣으세요.")
         return problems
 
     result = _ask_until_ok(model, messages, NarrationSet, check, attempts)
     got = {ln.id: FOREIGN_SCRIPT.sub("", ln.narration).strip() for ln in result.lines} if result else {}
     return [got.get(i, "") for i in range(len(items))]
+
+
+ORDINAL_WORDS = {"첫": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7}
+ORDINAL = re.compile(r"(첫|둘|셋|넷|다섯|여섯|일곱)째|(첫|두|세|네|다섯|여섯|일곱)\s?번째|(첫)\s?(?:번째|단계|팁)")
+
+
+def ordinals(text: str) -> set[int]:
+    """'첫째', '두 번째', '세번째' 같은 순서 표현의 번호."""
+    return {ORDINAL_WORDS[next(g for g in m.groups() if g)] for m in ORDINAL.finditer(text)}
 
 
 def timeline_text(frames: list[dict], segments: list[dict], start: float = 0.0, end: float = float("inf")) -> str:

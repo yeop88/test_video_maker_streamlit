@@ -1,0 +1,61 @@
+/* 영상 업로드 칸을 크게: st.container(key="video_drop") 안의 업로드 칸에만 적용 (사이드바 목소리 샘플 칸은 그대로) */
+.st-key-video_drop [data-testid="stFileUploaderDropzone"] {
+  min-height: 200px;
+  border: 2px dashed rgba(250, 250, 250, 0.35);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzone"]::before {
+  content: "🎬 영상 파일을 여기로 끌어다 놓으세요";
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzoneInstructions"]::before {
+  content: "화면 어디에 놓아도 됩니다 · 또는 Upload 버튼 · ";
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzone"]:hover,
+body.shorts-dragging .st-key-video_drop [data-testid="stFileUploaderDropzone"] {
+  border-color: #ff4b4b;
+  background-color: rgba(255, 75, 75, 0.08);
+}
+
+/* 파일을 올린 뒤에는 작게 */
+.st-key-video_drop [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileChips"]) {
+  min-height: auto;
+  flex-direction: row;
+  justify-content: flex-start;
+  border-style: solid;
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileChips"])::before {
+  content: none;
+}
+
+/* 파일을 끌고 오는 동안 화면 전체에 보이는 안내 (마우스 이벤트는 통과) */
+#shorts-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(14, 17, 23, 0.78);
+  border: 4px dashed #ff4b4b;
+  color: #fff;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+body.shorts-dragging #shorts-drop-overlay {
+  display: flex;
+}

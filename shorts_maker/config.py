@@ -1,8 +1,10 @@
 """프로젝트 전역 설정."""
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK_DIR = ROOT / "workdir"  # 업로드 영상과 중간 결과물 저장 위치
+# 업로드 영상과 중간 결과물 저장 위치 (테스트는 SHORTS_WORK_DIR로 임시 폴더를 지정)
+WORK_DIR = Path(os.environ.get("SHORTS_WORK_DIR") or ROOT / "workdir")
 
 OUTPUT_SIZE = (1080, 1920)  # 쇼츠/릴스 세로 해상도
 MAX_SOURCE_SECONDS = 900  # 분석할 원본 구간 최대 길이 (15분)

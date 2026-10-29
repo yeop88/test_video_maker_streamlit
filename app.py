@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import shorts_maker
 from shorts_maker import config, llm, media, pipeline, presets, tts
@@ -13,6 +14,8 @@ ENGINE_LABELS = {"edge": "Edge TTS (기본 목소리, 인터넷 필요)", "chatt
 LAYOUT_LABELS = {"blur": "블러 배경 (가로 영상·글자 많은 화면 추천)", "crop": "가운데 크롭 (화면 꽉 차게, 양옆 잘림)"}
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 STATE_KEYS = ("job", "title", "plan", "result")
+VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
+UI_DIR = Path(__file__).parent / "ui"
 
 
 @st.cache_resource(show_spinner="Whisper 모델을 불러오는 중... (처음 한 번은 다운로드로 몇 분 걸립니다)")
@@ -176,7 +179,11 @@ st.caption(
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다."
 )
 
-uploaded = st.file_uploader("영상 업로드", type=["mp4", "mov", "webm", "mkv", "m4v"])
+# 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*)
+st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>")
+components.html(f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", height=0)
+with st.container(key="video_drop"):
+    uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES)
 if uploaded is None:
     st.info(f"영상을 올리면 시작합니다. 긴 영상은 분석할 구간을 {config.MAX_SOURCE_SECONDS // 60}분 이하로 골라 주세요.")
     st.stop()

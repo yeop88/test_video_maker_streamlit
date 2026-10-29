@@ -5,6 +5,9 @@ torchaudio==2.6.0+cu124
 
 # 웹 UI
 streamlit>=1.40
+# pyarrow 26은 NumPy 2 이상이 필요한데, chatterbox-tts가 NumPy 1.x를 요구한다.
+# 맞지 않으면 2단계 표(st.data_editor)에서 ImportError가 난다. 24.0.0은 NumPy 1.26.4에서 동작 확인.
+pyarrow==24.0.0
 
 # 음성 인식 (Whisper) / 나레이션 음성 (Chatterbox Multilingual)
 chatterbox-tts==0.1.7

@@ -64,7 +64,7 @@ streamlit run app.py
 
 ## 사용 방법
 
-1. **업로드**: 영상을 올리고 분석할 구간을 고릅니다 (15분 이하).
+1. **업로드**: 영상 파일을 **화면 아무 곳에나 끌어다 놓거나** Upload 버튼으로 올리고, 분석할 구간을 고릅니다 (15분 이하, MP4·MOV·WEBM·MKV·M4V·AVI).
 2. **1단계 · 영상 분석 + 쇼츠 구성**: 대사 인식, 장면 설명 후 AI가 구간과 나레이션을 정합니다. 「AI가 이해한 내용」을 펼치면 타임라인을 볼 수 있습니다.
 3. **2단계 · 확인·수정**: 표에서 구간 시간과 나레이션을 고치거나 행을 추가·삭제합니다.
    - 🔄 **구성 다시 만들기**: 구간과 나레이션을 처음부터 다시
@@ -100,9 +100,12 @@ shorts_maker/
   subtitles.py          쇼츠 스타일 ASS 자막 + 제목
   pipeline.py           단계별 작업 연결
   presets.py            설정 프리셋 저장·불러오기·검증
+ui/
+  dropzone.css, .js     드래그 앤 드롭 업로드 (큰 업로드 칸, 화면 어디에 놓아도 업로드)
 tests/
   verify_pipeline.py    전체 파이프라인 검증 (3가지 조건, 수치 판정)
   test_presets_ui.py    프리셋 화면 테스트 (Streamlit AppTest)
+  test_ui_browser.py    실제 브라우저(Edge) 화면 테스트: 드래그 업로드, 1~3단계 전체
 docs/test_reports/      검증 기록
 workdir/                업로드 영상과 중간 결과물 (git 제외)
 ```
@@ -112,6 +115,10 @@ workdir/                업로드 영상과 중간 결과물 (git 제외)
 ```bash
 .venv\Scripts\python tests\verify_pipeline.py    # 전체 파이프라인 (GPU, Ollama, 인터넷 필요, 약 3분)
 .venv\Scripts\python tests\test_presets_ui.py    # 프리셋 화면 (몇 초)
+
+# 실제 브라우저 테스트 (개발용 패키지 필요: pip install -r requirements-dev.txt, Microsoft Edge 사용)
+.venv\Scripts\python tests\test_ui_browser.py --quick   # 드래그 업로드만 (몇십 초)
+.venv\Scripts\python tests\test_ui_browser.py           # 업로드부터 다운로드까지 (약 2분)
 ```
 
 정답을 아는 테스트 영상 3개를 직접 만들어 전체 과정을 돌립니다.

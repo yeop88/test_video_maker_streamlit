@@ -1,0 +1,5 @@
+# 개발·검증용 (앱 실행에는 필요 없음)
+-r requirements.txt
+
+# 실제 브라우저 화면 테스트 (tests/test_ui_browser.py). 브라우저는 설치된 Microsoft Edge를 사용
+playwright==1.64.1

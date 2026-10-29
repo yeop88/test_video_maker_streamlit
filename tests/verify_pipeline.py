@@ -205,6 +205,10 @@ for t in TESTS:
     r["narration_hangul_ratio"] = round(len(re.findall(r"[가-힣]", narration)) / max(1, len(norm(narration))), 2)
     r["keywords_hit"] = [k for k in t["keywords"] if k in narration]
     r["topics_missing"] = [g[0] for g in t.get("topics", []) if not any(k in narration for k in g)]
+    # 화면 점검에서 나온 문제: 제목이 "3" 하나, "두 번째·세 번째"만 있고 첫 번째가 빠짐
+    orders = llm.ordinals(narration)
+    r["ordinals"] = sorted(orders)
+    r["ordinals_skipped"] = [n for n in range(1, max(orders, default=0) + 1) if n not in orders]
     # 원본(대사, 화면 글자)에 없는 숫자를 지어냈는가
     truth_text = " ".join(text for _, _, text in true_lines) + " " + " ".join(cap for _, cap, _ in t["scenes"])
     r["invented_numbers"] = sorted(number_values(narration) - number_values(truth_text) - {1})
@@ -282,6 +286,8 @@ for t in TESTS:
         "narration_korean": not r["narration_foreign_script"] and r["narration_hangul_ratio"] >= 0.9,
         "narration_grounded(keywords>=2)": len(r["keywords_hit"]) >= 2,
         "all_topics_covered": not r["topics_missing"],
+        "title_meaningful(hangul>=4)": len(re.findall(r"[가-힣]", title)) >= 4,
+        "no_skipped_ordinals": not r["ordinals_skipped"],
         "no_invented_numbers": not r["invented_numbers"],
         "narration_matches_scene": not r["out_of_sync"],
         "no_mid_sentence_cut": r["cuts_mid_sentence"] == 0,

@@ -1,0 +1,21 @@
+# AI 생성 전용 가상환경(.venv-gen)용 패키지. 앱 본체(.venv)와 따로 설치한다.
+# chatterbox-tts가 diffusers==0.29.0에 고정되어 있고, 그 버전은 transformers 5.x와 함께 쓸 수 없어서
+# 이미지·영상·음악 생성은 이 환경에서 별도 프로세스로 실행한다 (끝나면 GPU 메모리도 바로 돌려받음).
+#
+# 설치:
+#   python -m venv .venv-gen
+#   .venv-gen\Scripts\python -m pip install -r requirements-gen.txt
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+diffusers==0.35.2
+transformers==4.57.1
+accelerate>=1.0
+sentencepiece>=0.2
+protobuf>=4.25
+safetensors>=0.4
+imageio>=2.34
+imageio-ffmpeg>=0.5
+numpy<2.0
+pillow>=10.0
+scipy>=1.11
+truststore>=0.10

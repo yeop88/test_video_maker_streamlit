@@ -1,7 +1,16 @@
 """쇼츠 스타일 한글 자막(ASS) 생성."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+# libass는 컬러 이모지를 그리지 못하고 흑백 윤곽이나 빈 상자로 그린다. 자막·제목에서는 뺀다.
+EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
+
+
+def clean_text(text: str) -> str:
+    return re.sub(r"\s{2,}", " ", EMOJI.sub("", text)).strip()
+
 
 # (폰트 파일, libass에서 찾을 폰트 이름) — 위에서부터 먼저 찾은 것을 사용
 FONT_CANDIDATES = [
@@ -49,7 +58,7 @@ def build_cues(rows: list[dict], max_chars: int, max_lines: int = 2) -> list[tup
     """한 구간의 자막이 길면 여러 화면으로 나누고, 글자 수 비율로 시간을 나눠 준다."""
     cues = []
     for row in rows:
-        text = row["text"].strip()
+        text = clean_text(row["text"])
         if not text:
             continue
         lines = wrap(text, max_chars)
@@ -92,6 +101,7 @@ def write_ass(
     title_end: float = 0.0,
 ) -> None:
     """title이 있으면 0초부터 title_end까지 화면 위쪽에 반투명 상자로 계속 보여 준다."""
+    title = clean_text(title)
     w, h = size
     outline = max(3, font_size // 12)
     # 제목은 되도록 한 줄로: 길면 글자 크기를 줄인다 (자막 크기의 70%까지)

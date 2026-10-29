@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### Added
+- **드래그 앤 드롭 업로드 개선** (`ui/dropzone.css`, `ui/dropzone.js`)
+  - 영상 업로드 칸을 크게 바꾸고 "🎬 영상 파일을 여기로 끌어다 놓으세요" 안내를 넣었습니다.
+  - **화면 어디에 놓아도** 업로드됩니다. 끌고 오는 동안 화면 전체에 "여기에 놓으면 영상이 업로드됩니다" 안내가 나옵니다.
+  - 업로드 칸 밖에 놓았을 때 브라우저가 영상 파일을 열어 앱을 떠나 버리던 동작을 막았습니다.
+  - 영상을 올리면 업로드 칸이 작아집니다. 사이드바 목소리 샘플 칸은 그대로입니다.
+- 받는 영상 형식에 AVI 추가.
+- 실제 브라우저(Microsoft Edge) 화면 테스트 [tests/test_ui_browser.py](tests/test_ui_browser.py): 드래그 업로드 11개 검사, 업로드부터 다운로드까지 전체 흐름. 개발용 패키지는 [requirements-dev.txt](requirements-dev.txt)(Playwright).
+- 작업 폴더를 환경 변수 `SHORTS_WORK_DIR`로 바꿀 수 있습니다 (테스트용).
+
+### Fixed
+- **2단계 표가 열리지 않던 문제**: `ImportError: pyarrow requires NumPy 2.0 or newer`. Streamlit이 설치한 pyarrow 26은 NumPy 2가 필요한데 chatterbox-tts는 NumPy 1.x를 요구합니다. `pyarrow==24.0.0`으로 고정했습니다. 그동안의 검증은 처리 함수를 직접 부르거나 업로드 전 화면만 봐서 이 문제를 찾지 못했습니다.
+- LLM이 제목을 "3"처럼 의미 없게 쓰던 문제: 한글 4자 미만이면 다시 요청합니다.
+- 나레이션이 "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서를 건너뛰던 문제: 순서 표현(첫째, 두 번째…)이 빠지면 빠진 번호를 알려 주고 다시 요청합니다.
+- 제목·자막의 이모지("🌅", "✨")가 흑백 윤곽 그림으로 나오던 문제: 자막 렌더러(libass)가 컬러 이모지를 그리지 못하므로 화면에 넣을 때 뺍니다.
+
+검증 기록: [docs/test_reports/2026-10-29_ui_check.md](docs/test_reports/2026-10-29_ui_check.md)
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
