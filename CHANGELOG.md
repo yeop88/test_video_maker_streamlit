@@ -14,11 +14,17 @@
 - 분석 버튼 아래에 LLM이 CPU로 설정되어 있으면 느리다는 안내를 보여 줍니다.
 
 ### Changed
+- 드래그 앤 드롭 스크립트를 지원 중단된 `components.html`(iframe) 대신 `st.html(unsafe_allow_javascript=True)`로 실행합니다.
+- 최근 작업에서 연 작업이 있으면 업로드 칸을 「📼 다른 영상 올리기」로 접어 둡니다.
+- `tests/verify_pipeline.py`가 테스트 영상을 workdir 대신 결과 폴더(`uploads/`)에 둡니다 (workdir에 `verify_*` 폴더 165개, 5.1GB가 쌓여 있었음).
 - 「AI 장면 생성 큐」를 공용 작업 큐로 합쳤습니다 (2단계 아래 → 화면 위쪽). 장면 설명을 영어 프롬프트로 바꾸는 일도 큐에서 합니다.
 - 새 패키지 `psutil` (requirements.txt). 설치: `.venv\Scripts\python -m pip install -r requirements.txt`
 
 ### Fixed
 - 최근 작업을 열 때 알림에 작업 이름 대신 폴더 ID가 나오던 문제
+- 업로드 칸에 파일이 남아 있을 때 최근 작업을 열면 그 파일의 작업으로 다시 바뀔 수 있던 문제
+- 업로드 칸의 영어 문구("Upload", "1GB per file")를 한국어로, 휴대폰 폭에서 안내문이 잘리던 문제
+- 최근 작업이 적을 때 목록 아래가 비어 보이던 문제
 
 ## [0.6.0] - 2026-10-30
 

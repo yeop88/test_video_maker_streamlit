@@ -22,6 +22,16 @@ import edge_tts
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "workdir" / "verify"
 OUT.mkdir(parents=True, exist_ok=True)
+
+
+def save_upload(upload_id: str, filename: str, data: bytes) -> Path:
+    """앱의 pipeline.save_upload와 같지만 결과 폴더 안(uploads/)에 둔다. workdir에 테스트 업로드 폴더가 쌓이지 않게."""
+    folder = OUT / "uploads" / upload_id
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"source{Path(filename).suffix.lower()}"
+    if not path.exists():
+        path.write_bytes(data)
+    return path
 SR = 44100
 WALL = Path("C:/Windows/Web/Wallpaper")
 T0 = time.time()
@@ -200,7 +210,7 @@ for t in TESTS:
     # 1단계 (app.py와 같은 순서)
     t1 = time.time()
     data = src.read_bytes()  # 앱처럼 내용 해시를 ID로 써야 다시 만든 테스트 영상이 이전 파일에 가려지지 않는다
-    source = pipeline.save_upload(f"verify_{t['name']}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
+    source = save_upload(f"verify_{t['name']}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
     job = pipeline.prepare_job(source, 0.0, info.duration)
     pipeline.transcribe(job, whisper)
     pipeline.capture_frames(job)
@@ -397,7 +407,7 @@ def test_series():
                       "-map", "[v]", "-map", "[au]", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(src)])
     split_at = media.probe(a).duration
     data = src.read_bytes()
-    source = pipeline.save_upload(f"verify_{name}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
+    source = save_upload(f"verify_{name}_{hashlib.sha1(data).hexdigest()[:8]}", src.name, data)
     t1 = time.time()
     job = pipeline.prepare_job(source, 0.0, media.probe(src).duration)
     pipeline.transcribe(job, whisper)

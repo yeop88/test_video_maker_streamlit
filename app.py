@@ -8,7 +8,6 @@ from pathlib import Path
 # Windows에서 서버 프로세스가 access violation으로 죽는 일이 있었다 (결과 표 st.dataframe에서 처음 불러올 때).
 import pyarrow  # noqa: F401
 import streamlit as st
-import streamlit.components.v1 as components
 
 import shorts_maker
 from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, project, system, tasks, tts,
@@ -820,7 +819,9 @@ def open_recent(folder: Path) -> None:
         set_project(opened, f"'{opened.name}' 작업을 불러왔습니다.")
     except (OSError, ValueError, KeyError) as e:
         ss.flash = f"작업을 불러오지 못했습니다: {e}"
-    ss.upload_id = None
+    # 업로드 칸에 남아 있는 파일이 방금 연 작업을 다시 덮어쓰지 않게, 그 파일은 이미 처리한 것으로 둔다
+    file = ss.get("video_file")
+    ss.upload_id = hashlib.sha1(file.getvalue()).hexdigest()[:12] if file is not None else None
 
 
 def close_project() -> None:
@@ -862,7 +863,8 @@ recent_items = project.recent(limit=50)
 with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
     if not recent_items:
         st.caption("아직 작업이 없습니다.")
-    with st.container(height=min(420, 60 + 56 * len(recent_items)) if recent_items else "content", border=False):
+    # 많을 때만 높이를 정해 스크롤 (적을 때 높이를 정하면 아래가 비어 보임)
+    with st.container(height=420 if len(recent_items) > 6 else "content", border=False):
         for item in recent_items:
             col_name, col_info, col_open, col_del = st.columns([4, 3, 1, 0.6], vertical_alignment="center")
             icon = "✨" if item["kind"] == "ai" else "📼"
@@ -878,11 +880,16 @@ st.radio("만드는 방식", list(MODE_LABELS), format_func=MODE_LABELS.get, hor
 
 uploaded = None
 if ss.mode == "upload":
-    # 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*)
-    st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>")
-    components.html(f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", height=0)
-    with st.container(key="video_drop"):
-        uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES)
+    # 드래그 앤 드롭: 업로드 칸을 크게 보여 주고, 화면 어디에 놓아도 업로드되게 한다 (ui/dropzone.*).
+    # 스크립트는 iframe(지원 중단된 components.html) 없이 본 화면에서 바로 실행한다.
+    st.html(f"<style>{(UI_DIR / 'dropzone.css').read_text(encoding='utf-8')}</style>"
+            f"<script>{(UI_DIR / 'dropzone.js').read_text(encoding='utf-8')}</script>", unsafe_allow_javascript=True)
+    # 최근 작업에서 연 작업이 있으면 업로드 칸은 접어 둔다 (방금 올린 파일이 있으면 그대로 보여 줌)
+    opened = ss.get("project")
+    folded = opened is not None and opened.kind == "upload" and ss.get("video_file") is None
+    with st.expander("📼 다른 영상 올리기", expanded=False) if folded else st.container():
+        with st.container(key="video_drop"):
+            uploaded = st.file_uploader("영상 업로드", type=VIDEO_TYPES, key="video_file")
 
 if uploaded is not None:
     data = uploaded.getvalue()

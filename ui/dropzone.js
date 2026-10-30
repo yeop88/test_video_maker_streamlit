@@ -1,5 +1,6 @@
 // 화면 어디에 영상 파일을 놓아도 업로드되게 한다.
-// components.html의 iframe 안에서 실행되며, 같은 출처라서 Streamlit 본 화면(window.parent)에 이벤트를 단다.
+// st.html(unsafe_allow_javascript=True)로 본 화면에서 바로 실행된다 (window.parent는 자기 자신).
+// 예전처럼 iframe 안에서 실행돼도 같은 출처라서 본 화면(window.parent)에 이벤트를 단다.
 // - 파일을 끌고 오면 화면 전체 안내를 띄운다.
 // - 업로드 칸 밖에 놓으면 브라우저가 파일을 열어 앱을 떠나는 대신, 그 파일을 업로드 칸에 넘긴다.
 (function () {

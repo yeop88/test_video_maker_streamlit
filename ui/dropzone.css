@@ -18,8 +18,23 @@
   font-weight: 600;
 }
 
+/* Streamlit이 영어로 쓰는 안내("1GB per file • MP4…")와 버튼("Upload")을 한국어로 바꿔 보여 준다 */
+.st-key-video_drop [data-testid="stFileUploaderDropzoneInstructions"] span {
+  display: none;
+}
+
 .st-key-video_drop [data-testid="stFileUploaderDropzoneInstructions"]::before {
-  content: "화면 어디에 놓아도 됩니다 · 또는 Upload 버튼 · ";
+  content: "화면 어디에 놓아도 됩니다 · 또는 「파일 고르기」 · 1GB까지 · MP4, MOV, WEBM, MKV, M4V, AVI";
+  white-space: normal;
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzone"] button [data-testid="stMarkdownContainer"] p {
+  font-size: 0;
+}
+
+.st-key-video_drop [data-testid="stFileUploaderDropzone"] button [data-testid="stMarkdownContainer"] p::after {
+  content: "파일 고르기";
+  font-size: 0.875rem;
 }
 
 .st-key-video_drop [data-testid="stFileUploaderDropzone"]:hover,
