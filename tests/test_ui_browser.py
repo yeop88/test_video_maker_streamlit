@@ -93,6 +93,33 @@ def open_app(page):
     page.wait_for_timeout(500)
 
 
+def open_settings(page, label: str):
+    """사이드바의 설정 분류 버튼을 눌러 팝업을 열고, 팝업 영역을 돌려준다."""
+    page.locator('[data-testid="stSidebar"]').get_by_role("button", name=label).click()
+    dialog = page.get_by_role("dialog")
+    dialog.wait_for(timeout=30000)
+    page.wait_for_timeout(800)
+    return dialog
+
+
+def wait_idle(page, timeout: int = 60000) -> None:
+    """앱이 다시 그리는 중(오른쪽 위 Running 표시)이 끝날 때까지 기다린다. 그리는 중에 누른 버튼은 무시될 수 있다."""
+    page.wait_for_function("!document.querySelector('[data-testid=\"stStatusWidget\"]')", timeout=timeout)
+
+
+def close_settings(page) -> None:
+    """팝업의 「완료」로 닫는다 (바뀐 설정이 화면 전체에 반영됨). 다시 그리는 중이라 눌림이 무시되면 한 번 더 누른다."""
+    for _ in range(3):
+        wait_idle(page)
+        page.get_by_role("dialog").get_by_role("button", name="완료").click()
+        try:
+            page.get_by_role("dialog").wait_for(state="detached", timeout=15000)
+            break
+        except Exception:
+            continue
+    page.wait_for_timeout(1000)
+
+
 def test_drag_drop(page, lake: Path, art: Path):
     open_app(page)
     box = page.query_selector(ZONE).bounding_box()
@@ -161,9 +188,9 @@ def test_cards(page):
 
 
 def test_music_upload(page, song: Path):
-    """사이드바 배경음악: 음악 올리기 → 보관함에 넣기 → 선택되고 미리 듣기가 보임."""
+    """설정 팝업 「소리·배경음악」: 음악 올리기 → 보관함에 넣기 → 선택되고 미리 듣기가 보임."""
     open_app(page)
-    side = page.locator('[data-testid="stSidebar"]')
+    side = open_settings(page, "🔊 소리·배경음악")
     side.get_by_text("음악 올리기").click()
     side.locator('[data-testid="stFileUploaderDropzoneInput"]').last.set_input_files(str(song))
     side.get_by_role("button", name="보관함에 넣기").wait_for(timeout=30000)
@@ -174,12 +201,15 @@ def test_music_upload(page, song: Path):
     check("올린 음악이 배경음악으로 선택됨", song.stem in picked, picked)
     check("배경음악 미리 듣기", side.locator("audio").count() >= 1)
     check("배경음악 크기 조절", side.get_by_text("배경음악 크기", exact=True).count() == 1)
+    close_settings(page)
+    summary = page.locator('[data-testid="stSidebar"]').inner_text()
+    check("팝업을 닫으면 사이드바 요약에 반영", song.stem in summary, song.stem)
 
 
 def test_voice_library(page):
-    """목소리 보관함: Chatterbox 고르기 → 가상 목소리 만들기 → 바로 골라짐 → 미리 듣기 → Edge로 되돌리기."""
+    """설정 팝업 「나레이션 목소리」: Chatterbox → 가상 목소리 만들기 → 바로 골라짐 → 미리 듣기 → Edge로 되돌리기."""
     open_app(page)
-    side = page.locator('[data-testid="stSidebar"]')
+    side = open_settings(page, "🎙️ 나레이션 목소리")
     side.get_by_text("Chatterbox (GPU, 목소리 샘플 사용 가능)").click()
     page.wait_for_timeout(1500)
     side.get_by_text("➕ 새 목소리 만들기").click()
@@ -195,6 +225,7 @@ def test_voice_library(page):
     check("고른 목소리로 미리 듣기", side.locator("audio").count() >= 1)
     side.get_by_text("Edge TTS (기본 목소리, 인터넷 필요)").click()
     page.wait_for_timeout(1500)
+    close_settings(page)
 
 
 def test_ai_scene_card(page):
@@ -221,8 +252,8 @@ def test_ai_scene_card(page):
 
 
 def test_ai_music(page):
-    """사이드바 ✨ AI로 음악 만들기 → 보관함에 들어가고 바로 골라짐."""
-    side = page.locator('[data-testid="stSidebar"]')
+    """설정 팝업 ✨ AI로 음악 만들기 → 보관함에 들어가고 바로 골라짐 (팝업은 열린 채)."""
+    side = open_settings(page, "🔊 소리·배경음악")
     side.get_by_text("✨ AI로 음악 만들기").click()
     side.get_by_label("어떤 음악?").fill("잔잔한 피아노 아침")
     side.get_by_label("어떤 음악?").press("Enter")
@@ -237,6 +268,7 @@ def test_ai_music(page):
             break
         page.wait_for_timeout(500)
     check("AI 음악 만들기 → 바로 골라짐", "잔잔한 피아노" in picked, f"{picked}, {time.time() - t:.0f}초")
+    close_settings(page)
 
 
 def test_full_flow(page, lake: Path, out: Path):
@@ -305,9 +337,11 @@ def test_results_history(page):
     """결과 기록: 설정을 바꿔 한 번 더 만들면 나란히 쌓이고, 지울 수 있다."""
     results = page.locator('[class*="st-key-result_"]')
     check("결과 기록 1개", results.count() == 1, results.count())
-    page.locator('[data-testid="stSidebar"]').get_by_role("combobox", name="목소리", exact=True).click()
+    dialog = open_settings(page, "🎙️ 나레이션 목소리")
+    dialog.get_by_role("combobox", name="목소리", exact=True).click()
     page.get_by_role("option", name="인준 (남성)").click()
     page.wait_for_timeout(1000)
+    close_settings(page)
     page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
     page.wait_for_function("document.querySelectorAll('[class*=\"st-key-result_\"]').length === 2", timeout=300000)
     page.wait_for_timeout(1500)
@@ -322,9 +356,12 @@ def test_results_history(page):
 def test_series_ui(page, combo: Path):
     """한 영상에서 쇼츠 2편: 쇼츠 개수 2 → 분석 → 탭 2개 → 모든 쇼츠 만들기 → 결과 2개."""
     open_app(page)
-    slider = page.locator('[data-testid="stSidebar"]').get_by_role("slider", name="쇼츠 개수 (한 영상에서)")
+    dialog = open_settings(page, "🧠 대본·구성")
+    slider = dialog.get_by_role("slider", name="쇼츠 개수 (한 영상에서)")
     slider.focus()
     slider.press("ArrowRight")
+    page.wait_for_timeout(1000)
+    close_settings(page)
     page.wait_for_timeout(1500)
     drag(page, 700, 140, combo)
     page.get_by_role("button", name="1단계 · 영상 분석 + 쇼츠 구성").click()
@@ -352,13 +389,12 @@ def test_ai_mode(page, out: Path):
     check("AI 모드에서는 영상 업로드 칸이 없음", page.locator(ZONE).count() == 0)
     models_text = page.locator('[data-testid="stMain"]').inner_text()
     check("AI 모드에 사용하는 AI 모델 표시", "🤖 사용하는 AI 모델" in models_text)
-    page.locator('[data-testid="stMain"]').get_by_text("💻 컴퓨터 사양과 추천 모델").click()
-    page.wait_for_timeout(1000)
-    main_text = page.locator('[data-testid="stMain"]').inner_text()
-    check("컴퓨터 사양 섹션 (GPU·RAM, CPU/GPU 추천)",
-          "RAM" in main_text and "추천 모델 (지금 장치 기준)" in main_text and "지금 고른 모델" in main_text)
-    side = page.locator('[data-testid="stSidebar"]')
-    check("사이드바 계산 장치 설정", side.get_by_text("GPU + CPU 함께 (GPU 메모리 아끼기)").count() == 1)
+    dialog = open_settings(page, "💻 컴퓨터·AI 모델")
+    dialog_text = dialog.inner_text()
+    check("컴퓨터 팝업: 사양 (GPU·RAM)과 장치별 추천 모델",
+          "RAM" in dialog_text and "추천 모델 (지금 장치 기준)" in dialog_text and "지금 고른 모델" in dialog_text)
+    check("컴퓨터 팝업: 계산 장치 설정", dialog.get_by_text("GPU + CPU 함께 (GPU 메모리 아끼기)").count() == 1)
+    close_settings(page)
     page.get_by_label("어떤 쇼츠를 만들까요?").fill("비 오는 날 창가에서 즐기는 따뜻한 차 한 잔")
     page.get_by_label("어떤 쇼츠를 만들까요?").press("Control+Enter")
     page.wait_for_timeout(1000)
@@ -437,33 +473,62 @@ def test_restore(page):
 
 
 def test_device_split(page):
-    """계산 장치 「작업별로 나누기」: 작업별 장치 선택이 나오고, 장치를 바꾸면 추천 모델이 바뀌고, 추천대로 맞추기가 된다."""
+    """설정 팝업 「컴퓨터·AI 모델」: 작업별로 나누기 → 작업 6개 장치 선택, 장치를 바꾸면 추천이 바뀜, 추천대로 맞추기."""
     open_app(page)
-    main = page.locator('[data-testid="stMain"]')
     side = page.locator('[data-testid="stSidebar"]')
-    main.get_by_text("💻 컴퓨터 사양과 추천 모델").click()
-    page.wait_for_timeout(1000)
-    before = main.inner_text()
-    side.get_by_role("radio", name="작업별로 나누기 (예: 영상은 GPU, 나머지는 CPU)").check(force=True)
+    dialog = open_settings(page, "💻 컴퓨터·AI 모델")
+    before = dialog.inner_text()
+    dialog.get_by_role("radio", name="작업별로 나누기 (예: 영상은 GPU, 나머지는 CPU)").check(force=True)
     page.wait_for_timeout(2500)
+    check("나누기를 골라도 팝업이 열려 있음", page.get_by_role("dialog").count() == 1)
     labels = ["장면 이해·대본 (Ollama LLM)", "대사 인식 (Whisper)", "나레이션 음성 (Chatterbox)", "AI 이미지", "AI 동영상", "AI 배경음악"]
-    shown = [label for label in labels if side.get_by_text(label, exact=True).count() >= 1]
+    shown = [label for label in labels if dialog.get_by_text(label, exact=True).count() >= 1]
     check("작업별로 나누기 → 작업 6개 장치 선택", len(shown) == 6, shown)
-    if main.get_by_text("💻 컴퓨터 사양과 추천 모델").count() and "추천 모델 (지금 장치 기준)" not in main.inner_text():
-        main.get_by_text("💻 컴퓨터 사양과 추천 모델").click()
-        page.wait_for_timeout(1000)
-    after = main.inner_text()
+    after = dialog.inner_text()
     check("장치를 바꾸면 추천 모델이 바뀜 (이미지: GPU → CPU)",
           "FLUX.2 [klein] 9B 4bit" in before and "SDXL-Turbo (fp32)" in after and "Edge TTS" in after,
           "GPU일 때 FLUX.2 9B, CPU일 때 SDXL-Turbo·Edge TTS")
-    check("기본 나누기: 동영상만 GPU", "AI 동영상 GPU" in after and "AI 이미지 CPU" in after)
-    page.get_by_role("button", name="✨ 추천 모델로 맞추기").first.click()
+    dialog.get_by_role("button", name="✨ 추천 모델로 맞추기").click()
     page.wait_for_timeout(2500)
-    check("추천 모델로 맞추기 → 이미지 SDXL-Turbo, 음성 Edge",
-          side.get_by_role("radio", name="SDXL-Turbo (가장 빠름, 화질 보통)").is_checked()
-          and side.get_by_role("radio", name="Edge TTS (기본 목소리, 인터넷 필요)").is_checked())
-    side.get_by_role("radio", name="GPU만 (가장 빠름)").check(force=True)  # 다음 테스트를 위해 되돌림
+    close_settings(page)
+    summary = side.inner_text()
+    check("기본 나누기: 동영상만 GPU (사이드바 요약)", "AI 동영상만 GPU" in summary, summary[-200:])
+    check("추천 모델로 맞추기 → 이미지 SDXL-Turbo, 음성 Edge (사이드바 요약)",
+          "SDXL-Turbo" in summary and "Edge ·" in summary)
+    dialog = open_settings(page, "💻 컴퓨터·AI 모델")  # 다음 테스트를 위해 되돌림
+    dialog.get_by_role("radio", name="GPU만 (가장 빠름)").check(force=True)
     page.wait_for_timeout(1500)
+    close_settings(page)
+
+def test_delete_recent(page, work: Path):
+    """📂 최근 작업: 🗑 → 확인 팝업 → 지우기 → 목록과 폴더에서 사라짐. 취소하면 그대로."""
+    open_app(page)
+    main = page.locator('[data-testid="stMain"]')
+    main.get_by_text("📂 최근 작업").click()
+    page.wait_for_timeout(1000)
+    delete_buttons = page.locator('[class*="st-key-delrecent_"]')
+    before = delete_buttons.count()
+    first = delete_buttons.first
+    folder = next(c for c in first.get_attribute("class").split() if c.startswith("st-key-delrecent_"))[len("st-key-delrecent_"):]
+    first.get_by_role("button").click()
+    dialog = page.get_by_role("dialog")
+    dialog.wait_for(timeout=30000)
+    check("지우기 전에 확인 팝업", "작업을 지울까요?" in dialog.inner_text())
+    dialog.get_by_role("button", name="취소").click()
+    page.wait_for_timeout(2000)
+    check("취소하면 그대로", (work / "workdir" / folder).exists())
+    if page.locator('[class*="st-key-delrecent_"]').count() == 0:  # 팝업을 닫으면서 펼침이 접혔으면 다시 펼침
+        main.get_by_text("📂 최근 작업").click()
+    page.wait_for_timeout(800)
+    page.locator(f'[class*="st-key-delrecent_{folder}"]').get_by_role("button").click()
+    page.get_by_role("dialog").get_by_role("button", name="🗑 지우기").click()
+    page.wait_for_timeout(3000)
+    if page.locator('[class*="st-key-delrecent_"]').count() == 0:
+        main.get_by_text("📂 최근 작업").click()
+        page.wait_for_timeout(800)
+    after = page.locator('[class*="st-key-delrecent_"]').count()
+    check("지우면 목록과 폴더에서 사라짐", after == before - 1 and not (work / "workdir" / folder).exists(),
+          f"{before} → {after}, {folder}")
 
 
 def main():
@@ -505,6 +570,7 @@ def main():
                 test_series_ui(page, combo)
                 test_ai_mode(page, work)
                 test_device_split(page)
+                test_delete_recent(page, work)
             browser.close()
     finally:
         died = server.poll() is not None

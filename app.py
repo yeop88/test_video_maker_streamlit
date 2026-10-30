@@ -243,91 +243,117 @@ def setting_slider(label: str, key: str, **kwargs):
     return st.slider(label, min_value=lo, max_value=hi, step=step, key=key, **kwargs)
 
 
-# ───────────────────────── 사이드바: 설정 ─────────────────────────
-with st.sidebar:
-    st.header("⚙️ 설정")
+# ───────────────────────── 설정 팝업 (분류별) ─────────────────────────
+# 사이드바에는 프리셋과 분류별 요약만 두고, 자세한 설정은 버튼을 누르면 뜨는 팝업(st.dialog)에서 바꾼다.
+# 팝업이 닫혀 있으면 위젯이 그려지지 않지만, 설정 값은 위쪽에서 매번 session_state에 다시 넣어 두므로 유지된다.
+DEVICE_SHORT = {"gpu": "GPU", "hybrid": "GPU+CPU", "cpu": "CPU"}
 
-    st.subheader("💾 프리셋")
-    names = presets.list_presets()
-    if ss.get("preset_select") not in names:
-        ss.preset_select = names[0]
-    selected = st.selectbox("프리셋", names, key="preset_select", format_func=lambda n: f"⭐ {n}" if presets.is_builtin(n) else n)
-    col_load, col_delete = st.columns(2)
-    col_load.button("불러오기", on_click=apply_preset, args=(selected,), width="stretch")
-    col_delete.button(
-        "삭제", on_click=delete_preset, args=(selected,), width="stretch",
-        disabled=presets.is_builtin(selected), help="⭐ 기본 제공 프리셋은 지울 수 없습니다.",
-    )
-    with st.expander("현재 설정을 프리셋으로 저장"):
-        st.text_input("프리셋 이름", key="preset_new_name", placeholder="예: 여행 브이로그용", max_chars=40)
-        st.button("저장", on_click=save_preset, type="primary", width="stretch",
-                  help="같은 이름이 있으면 덮어씁니다. 목소리 샘플 파일은 저장되지 않습니다.")
-    loaded = ss.get("preset_loaded")
-    if loaded:
-        changed = loaded[1] != current_settings()
-        st.caption(f"현재: {loaded[0]}" + (" (수정됨)" if changed else ""))
+
+def show_message() -> None:
+    """콜백이 남긴 알림 (팝업 안이든 사이드바든 먼저 그리는 쪽에서 한 번 보여 줌)."""
     msg = ss.pop("preset_msg", None)
     if msg:
         getattr(st, msg[0])(msg[1])
 
-    st.subheader("💻 계산 장치")
-    st.radio("계산 장치", list(system.DEVICES), format_func=system.DEVICES.get, key="device", on_change=change_device,
-             label_visibility="collapsed", help=system.DEVICE_HELP)
-    suggested = system.suggested_device(specs)
-    if ss.device != suggested:
-        st.caption(f"이 컴퓨터 추천: {system.DEVICES[suggested]}")
-    if ss.device == "split":
-        with st.container(border=True):
-            for task, label in system.TASKS.items():
-                st.radio(label, list(system.TASK_DEVICES), format_func=system.TASK_DEVICES.get, key=f"dev_{task}",
-                         horizontal=True, on_change=change_device)
-    recs = recommendations()
-    off = [t for t, r in recs.items() if not is_recommended(t, r)]
-    st.button("✨ 추천 모델로 맞추기", on_click=apply_recommended, width="stretch", disabled=not off,
-              help="작업마다 지금 고른 장치(GPU/CPU)에 맞는 추천 모델로 바꿉니다: "
-                   + " · ".join(f"{system.TASKS[t]}: {recs[t]['text'].split(' — ')[0]}" for t in system.TASKS))
-    if off:
-        st.caption("추천과 다른 모델: " + ", ".join(system.TASKS[t] for t in off))
-    st.radio("AI 이미지 모델", list(generate.IMAGE_MODELS), format_func=lambda k: generate.IMAGE_MODELS[k]["label"],
-             key="image_model", on_change=change_video_model,
-             help="AI 장면을 「AI 이미지 + 움직임」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다. "
-                  "처음 쓰는 모델은 내려받느라 오래 걸립니다 (아래 「💻 컴퓨터 사양과 추천 모델」에 크기·라이선스).")
-    st.caption(f"추천 ({system.TASK_DEVICES.get(dev('image'), 'GPU')}): {recs['image']['text']}")
-    image_ok, image_msg = generate.image_available()
-    if not image_ok:
-        st.warning(image_msg)
-    st.radio("AI 동영상 모델", list(generate.VIDEO_MODELS), format_func=generate.VIDEO_MODELS.get, key="video_model",
-             on_change=change_video_model,
-             help="AI 장면을 「AI 동영상」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다.")
-    st.caption(f"추천 ({system.TASK_DEVICES.get(dev('video'), 'GPU')}): {recs['video']['text']}")
-    if dev("video") == "cpu" and ss.video_model == "ltx25":
-        st.warning("LTX-2.5는 GPU에서만 돌립니다. AI 동영상 장치를 GPU로 바꾸거나 LTX-Video 2B를 고르세요.")
-    if ss.video_model == "ltx25":
-        st.radio("LTX-2.5 양자화", list(generate.LTX_QUANTS), format_func=generate.LTX_QUANTS.get, key="ltx_quant",
-                 on_change=change_video_model,
-                 help="22B 모델은 원본(bf16 42GB)이 16GB GPU에 들어가지 않아 줄여서 올립니다. "
-                      "처음 쓸 때 약 71GB를 내려받고 4bit로 양자화해 workdir/models에 저장합니다 (다음부터는 바로 불러옴).")
-        ltx_ok, ltx_msg = generate.ltx_status()
-        if not ltx_ok:
-            st.warning(ltx_msg)
-    if any(dev(t) != "cpu" for t in system.TASKS) and not specs.gpus:
-        st.warning("NVIDIA GPU를 찾지 못했습니다. GPU를 고르면 CPU로 돌아가거나 AI 생성이 막힙니다.")
-    st.caption("사양과 장치별 추천 모델은 본문 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 볼 수 있습니다. 이 설정은 프리셋에 넣지 않고 이 컴퓨터에 저장합니다.")
 
-    st.subheader("영상 이해 / 대본")
+def close_button() -> None:
+    st.divider()
+    if st.button("완료", type="primary", width="stretch", key="dialog_done"):
+        st.rerun()  # 팝업을 닫고 바뀐 설정을 화면 전체에 반영
+
+
+def device_summary() -> str:
+    if ss.device == "split":
+        gpu_tasks = [system.TASKS[t].split(" (")[0] for t in system.TASKS if dev(t) != "cpu"]
+        return f"작업별: {', '.join(gpu_tasks)}만 GPU" if gpu_tasks else "작업별: 모두 CPU"
+    return system.DEVICES[ss.device].split(" (")[0]
+
+
+def computer_settings() -> None:
+    """💻 컴퓨터·AI 모델: 사양, 계산 장치(작업별), 추천 모델, AI 이미지·동영상 모델."""
+    show_message()
+    gpu_text = ", ".join(f"{g.name} {g.vram_gb:.0f}GB" for g in specs.gpus) or "NVIDIA GPU 없음"
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("GPU (VRAM)", f"{specs.vram_gb:.0f} GB" if specs.gpus else "없음", help=gpu_text)
+    c2.metric("RAM", f"{specs.ram_gb:.0f} GB", f"남은 {specs.ram_free_gb:.0f} GB", delta_color="off")
+    c3.metric("CPU 코어", f"{specs.cores}개", help=specs.cpu)
+    c4.metric("작업 폴더 디스크 여유", f"{specs.disk_free_gb:,} GB")
+    st.caption(f"{specs.os} · CPU {specs.cpu} · GPU {gpu_text}" + (f" (드라이버 {specs.gpus[0].driver})" if specs.gpus else ""))
+
+    tab_device, tab_models = st.tabs(["계산 장치와 추천 모델", "AI 이미지·동영상 모델"])
+    with tab_device:
+        st.radio("계산 장치", list(system.DEVICES), format_func=system.DEVICES.get, key="device", on_change=change_device,
+                 help=system.DEVICE_HELP)
+        suggested = system.suggested_device(specs)
+        if ss.device != suggested:
+            st.caption(f"이 컴퓨터 추천: {system.DEVICES[suggested]}")
+        if ss.device == "split":
+            with st.container(border=True):
+                cols = st.columns(3)
+                for i, (task, label) in enumerate(system.TASKS.items()):
+                    cols[i % 3].radio(label, list(system.TASK_DEVICES), format_func=system.TASK_DEVICES.get,
+                                      key=f"dev_{task}", horizontal=True, on_change=change_device)
+        if any(dev(t) != "cpu" for t in system.TASKS) and not specs.gpus:
+            st.warning("NVIDIA GPU를 찾지 못했습니다. GPU를 고르면 CPU로 돌아가거나 AI 생성이 막힙니다.")
+        # 작업마다 지금 장치에 맞는 추천 (장치를 바꾸면 추천도 바뀜). 문구가 길어서 줄바꿈되는 표(st.table)로.
+        recs = recommendations()
+        st.markdown("**추천 모델** (장치를 바꾸면 추천도 바뀝니다)")
+        st.table([{"작업": label, "장치": DEVICE_SHORT[dev(t)], "추천 모델 (지금 장치 기준)": recs[t]["text"],
+                   "지금 고른 모델": current_model(t),
+                   "상태": ("✅ 추천대로" if is_recommended(t, recs[t]) else "↔ 추천과 다름") + " · "
+                           + system.fits(recs[t]["need"], specs, dev(t))}
+                  for t, label in system.TASKS.items()], hide_index=True)
+        st.button("✨ 추천 모델로 맞추기", on_click=apply_recommended, width="stretch",
+                  disabled=all(is_recommended(t, r) for t, r in recs.items()))
+        st.caption("이 설정은 프리셋에 넣지 않고 이 컴퓨터에 저장합니다. GPU 메모리는 모델을 하나씩 쓸 때 기준입니다.")
+    with tab_models:
+        recs = recommendations()
+        st.radio("AI 이미지 모델", list(generate.IMAGE_MODELS), format_func=lambda k: generate.IMAGE_MODELS[k]["label"],
+                 key="image_model", on_change=change_video_model,
+                 help="AI 장면을 「AI 이미지 + 움직임」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다. "
+                      "처음 쓰는 모델은 내려받느라 오래 걸립니다.")
+        st.caption(f"추천 ({DEVICE_SHORT[dev('image')]}): {recs['image']['text']}")
+        image_ok, image_msg = generate.image_available()
+        if not image_ok:
+            st.warning(image_msg)
+        st.radio("AI 동영상 모델", list(generate.VIDEO_MODELS), format_func=generate.VIDEO_MODELS.get, key="video_model",
+                 on_change=change_video_model,
+                 help="AI 장면을 「AI 동영상」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다.")
+        st.caption(f"추천 ({DEVICE_SHORT[dev('video')]}): {recs['video']['text']}")
+        if dev("video") == "cpu" and ss.video_model == "ltx25":
+            st.warning("LTX-2.5는 GPU에서만 돌립니다. AI 동영상 장치를 GPU로 바꾸거나 LTX-Video 2B를 고르세요.")
+        if ss.video_model == "ltx25":
+            st.radio("LTX-2.5 양자화", list(generate.LTX_QUANTS), format_func=generate.LTX_QUANTS.get, key="ltx_quant",
+                     on_change=change_video_model,
+                     help="22B 모델은 원본(bf16 42GB)이 16GB GPU에 들어가지 않아 줄여서 올립니다. "
+                          "처음 쓸 때 약 71GB를 내려받고 4bit로 양자화해 workdir/models에 저장합니다 (다음부터는 바로 불러옴).")
+            ltx_ok, ltx_msg = generate.ltx_status()
+            if not ltx_ok:
+                st.warning(ltx_msg)
+    close_button()
+
+
+def script_settings() -> None:
+    """🧠 대본·구성: LLM, 말투, 길이, 편 수."""
+    show_message()
     if not models:
         st.error("Ollama에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요.")
-    llm_model = st.selectbox(
-        "LLM (Ollama)", models, key="llm_model",
-        help="장면 이미지를 이해해야 하므로 vision을 지원하는 모델(qwen3.5, gemma4 등)을 고르세요.",
-    ) if models else None
+    else:
+        st.selectbox("LLM (Ollama)", models, key="llm_model",
+                     help="장면 이미지를 이해해야 하므로 vision을 지원하는 모델(qwen3.5, gemma4 등)을 고르세요.")
+        st.caption(f"추천 ({DEVICE_SHORT[dev('llm')]}): {recommendations()['llm']['text']}")
     st.selectbox("나레이션 말투", presets.CHOICES["style"], key="style")
     setting_slider("쇼츠 길이 목표 (초)", "target_sec")
     setting_slider("쇼츠 개수 (한 영상에서)", "short_count",
                    help="2편 이상이면 긴 영상을 서로 다른 주제로 나눠 편마다 쇼츠를 만듭니다.")
+    close_button()
 
-    st.subheader("나레이션 목소리")
+
+def voice_settings() -> None:
+    """🎙️ 나레이션 목소리: 엔진, 목소리, 속도·감정, 목소리 보관함."""
+    show_message()
     st.radio("음성 엔진", presets.CHOICES["engine"], format_func=ENGINE_LABELS.get, key="engine")
+    st.caption(f"추천 ({DEVICE_SHORT[dev('tts')]}): {recommendations()['tts']['text']}")
     if ss.engine == "edge":
         st.selectbox("목소리", presets.CHOICES["edge_voice"], format_func=VOICE_LABELS.get, key="edge_voice")
         setting_slider("말하기 속도 (%)", "rate")
@@ -335,7 +361,7 @@ with st.sidebar:
         library = {v["id"]: v for v in voices.list_voices()}
         if ss.voice_id not in library:
             ss.voice_id = ""
-        col_voice, col_del_voice = st.columns([5, 1])
+        col_voice, col_del_voice = st.columns([5, 1], vertical_alignment="bottom")
         col_voice.selectbox(
             "복제할 목소리", [""] + list(library), key="voice_id",
             format_func=lambda i: "기본 목소리" if not i else
@@ -345,7 +371,7 @@ with st.sidebar:
         col_del_voice.button("🗑", key="del_voice", disabled=not ss.voice_id, help="이 목소리를 보관함에서 지우기",
                              on_click=delete_voice)
         setting_slider("감정 표현 강도", "exaggeration")
-        if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (GPU, 몇 초)."):
+        if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (몇 초)."):
             with st.spinner("목소리를 만드는 중..."):
                 engine = tts.ChatterboxEngine(get_chatterbox(dev("tts")), voices.sample_path(ss.voice_id), ss.exaggeration)
                 ss.voice_preview = str(engine.synthesize_cached(PREVIEW_TEXT, config.WORK_DIR / "voices" / "preview"))
@@ -372,14 +398,16 @@ with st.sidebar:
                 st.slider("음색 (반음)", -4.0, 4.0, 0.0, 0.5, key="virtual_formant",
                           help="목소리 울림(포먼트)을 바꿉니다. 낮추면 더 어른스럽고, 높이면 더 가볍게 들립니다.")
                 st.button("만들기", key="add_voice_virtual", on_click=add_voice, args=("virtual",), width="stretch")
+        st.caption("목소리 샘플은 본인 또는 동의받은 사람의 목소리만 사용하세요.")
+    close_button()
 
-    st.subheader("소리")
+
+def sound_settings() -> None:
+    """🔊 소리·배경음악: 원본 소리, 배경음악 보관함, AI 음악, 음악 올리기."""
+    show_message()
     setting_slider("원본 소리 크기", "original_gain")
-    setting_slider(
-        "나레이션 중 원본 소리 크기", "duck_gain",
-        help="나레이션이 나오는 동안 원본 소리를 이 비율로 줄입니다 (원본 소리 크기에 곱해짐).",
-    )
-
+    setting_slider("나레이션 중 원본 소리 크기", "duck_gain",
+                   help="나레이션이 나오는 동안 원본 소리를 이 비율로 줄입니다 (원본 소리 크기에 곱해짐).")
     st.markdown("**🎵 배경음악**")
     tracks = {t["id"]: t for t in music.list_tracks()}
     if "pending_bgm" in ss:  # 방금 만든 AI 음악을 고른다 (위젯을 그리기 전에만 값을 바꿀 수 있음)
@@ -399,24 +427,28 @@ with st.sidebar:
         gen_ok, gen_msg = generate.available()
         st.text_input("어떤 음악?", key="ai_music_desc", placeholder="예: 잔잔한 피아노, 평화로운 아침")
         st.slider("길이 (초)", 10, 30, 20, 5, key="ai_music_sec", help="쇼츠가 더 길면 겹쳐 이어 반복합니다.")
-        if st.button("음악 만들기", disabled=not gen_ok, help=gen_msg or "MusicGen으로 배경음악을 만듭니다 (20초 곡에 약 40초).",
+        if st.button("음악 만들기", disabled=not gen_ok, help=gen_msg or "MusicGen으로 배경음악을 만듭니다.",
                      width="stretch"):
             desc = ss.get("ai_music_desc", "").strip() or "calm ambient background music"
             with st.spinner("음악을 만드는 중..."):
                 try:
                     prompt = llm.english_prompt(ss.llm_model, desc, "music") if models else desc
-                    wav = generate.music(prompt, float(ss.ai_music_sec))
+                    wav = generate.music(prompt, float(ss.get("ai_music_sec", 20)))
                     ss.pending_bgm = music.add_generated(wav, desc[:20], prompt)
                     ss.preset_msg = ("success", f"AI 음악을 만들어 보관함에 넣었습니다: {prompt}")
                 except RuntimeError as e:
                     ss.preset_msg = ("error", str(e)[:300])
-            st.rerun()
+            st.rerun(scope="fragment")  # 팝업은 그대로 두고 새 곡을 골라 다시 그림
     with st.expander("음악 올리기"):
         st.file_uploader("음악 파일", type=music.MUSIC_TYPES, key="bgm_upload", label_visibility="collapsed")
         st.button("보관함에 넣기", on_click=add_music_upload, disabled=ss.get("bgm_upload") is None, width="stretch",
                   help="올린 음악은 workdir/music/에 저장되어 다른 작업에서도 고를 수 있습니다. 권리가 있는 음악만 쓰세요.")
+    close_button()
 
-    st.subheader("화면 / 자막")
+
+def screen_settings() -> None:
+    """🎬 화면·자막: 세로 변환, 제목, 자막 스타일·크기·위치·색."""
+    show_message()
     st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
     st.checkbox("위쪽에 제목 표시", key="show_title")
     st.radio("자막 스타일", presets.CHOICES["subtitle_style"], format_func=SUBTITLE_LABELS.get, key="subtitle_style",
@@ -426,10 +458,74 @@ with st.sidebar:
     setting_slider("자막 크기", "font_size")
     setting_slider("자막 위치 (아래에서 %)", "margin_percent")
     st.color_picker("자막 색", key="color")
+    close_button()
+
+
+def voice_summary() -> str:
+    if ss.engine == "edge":
+        return f"Edge · {VOICE_LABELS.get(ss.edge_voice, ss.edge_voice)} · 속도 {ss.rate:+d}%"
+    chosen = next((v for v in voices.list_voices() if v["id"] == ss.voice_id), None)
+    return f"Chatterbox · {chosen['name'] if chosen else '기본 목소리'}"
+
+
+def sound_summary() -> str:
+    track = next((t for t in music.list_tracks() if t["id"] == ss.bgm_track), None)
+    return f"원본 {ss.original_gain:.2f} · " + (f"배경음악 {track['name']}" if track else "배경음악 없음")
+
+
+# 분류: (버튼 이름, 팝업 제목, 팝업 내용, 요약)
+SETTING_GROUPS = [
+    ("🧠 대본·구성", "대본·구성 설정", script_settings,
+     lambda: f"{ss.llm_model or 'LLM 없음'} · {ss.style.split(' (')[0]} · {ss.target_sec}초 · {ss.short_count}편"),
+    ("🎙️ 나레이션 목소리", "나레이션 목소리 설정", voice_settings, voice_summary),
+    ("🔊 소리·배경음악", "소리·배경음악 설정", sound_settings, sound_summary),
+    ("🎬 화면·자막", "화면·자막 설정", screen_settings,
+     lambda: f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · {SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"),
+    ("💻 컴퓨터·AI 모델", "컴퓨터와 AI 모델 설정", computer_settings,
+     lambda: f"{device_summary()} · {generate.IMAGE_MODELS[ss.image_model]['name']} · {generate.MODEL_INFO['video']['name']}"),
+]
+DIALOGS = {label: st.dialog(title, width="large")(body) for label, title, body, _ in SETTING_GROUPS}
+
+# ───────────────────────── 사이드바: 프리셋 + 설정 분류 ─────────────────────────
+with st.sidebar:
+    st.header("⚙️ 설정")
+
+    st.subheader("💾 프리셋")
+    names = presets.list_presets()
+    if ss.get("preset_select") not in names:
+        ss.preset_select = names[0]
+    selected = st.selectbox("프리셋", names, key="preset_select", format_func=lambda n: f"⭐ {n}" if presets.is_builtin(n) else n)
+    col_load, col_delete = st.columns(2)
+    col_load.button("불러오기", on_click=apply_preset, args=(selected,), width="stretch")
+    col_delete.button(
+        "삭제", on_click=delete_preset, args=(selected,), width="stretch",
+        disabled=presets.is_builtin(selected), help="⭐ 기본 제공 프리셋은 지울 수 없습니다.",
+    )
+    with st.expander("현재 설정을 프리셋으로 저장"):
+        st.text_input("프리셋 이름", key="preset_new_name", placeholder="예: 여행 브이로그용", max_chars=40)
+        st.button("저장", on_click=save_preset, type="primary", width="stretch",
+                  help="같은 이름이 있으면 덮어씁니다. 목소리 샘플 파일은 저장되지 않습니다.")
+    loaded = ss.get("preset_loaded")
+    if loaded:
+        changed = loaded[1] != current_settings()
+        st.caption(f"현재: {loaded[0]}" + (" (수정됨)" if changed else ""))
+    show_message()
+
+    st.subheader("🛠️ 세부 설정")
+    st.caption("누르면 팝업 창에서 바꿀 수 있습니다.")
+    open_dialog = None
+    for label, _, _, summary in SETTING_GROUPS:
+        if st.button(label, key=f"open_{label}", width="stretch"):
+            open_dialog = label
+        st.caption(summary())
+    if open_dialog:
+        DIALOGS[open_dialog]()
 
     st.divider()
     st.caption("⚠️ 본인이 권리를 가진 영상이나 허락받은 영상만 사용하세요. 목소리 샘플은 본인 또는 동의받은 사람의 목소리만 사용하세요.")
     st.caption(f"v{shorts_maker.__version__}")
+
+llm_model = ss.llm_model if models else None
 
 style_label, target_sec = ss.style, ss.target_sec
 show_title, font_size, margin_percent, color = ss.show_title, ss.font_size, ss.margin_percent, ss.color
@@ -443,31 +539,6 @@ st.caption(
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
     "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
-device_summary = (" · ".join(f"{system.TASKS[t].split(' (')[0]} {system.TASK_DEVICES[dev(t)]}" for t in system.TASKS)
-                  if ss.device == "split" else system.DEVICES[ss.device])
-with st.expander(f"💻 컴퓨터 사양과 추천 모델 · 지금: {device_summary}"):
-    gpu_text = ", ".join(f"{g.name} {g.vram_gb:.0f}GB" for g in specs.gpus) or "NVIDIA GPU 없음"
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("GPU (VRAM)", f"{specs.vram_gb:.0f} GB" if specs.gpus else "없음", help=gpu_text)
-    c2.metric("RAM", f"{specs.ram_gb:.0f} GB", f"남은 {specs.ram_free_gb:.0f} GB", delta_color="off")
-    c3.metric("CPU 코어", f"{specs.cores}개", help=specs.cpu)
-    c4.metric("작업 폴더 디스크 여유", f"{specs.disk_free_gb:,} GB")
-    st.caption(f"{specs.os} · CPU {specs.cpu} · GPU {gpu_text}"
-               + (f" (드라이버 {specs.gpus[0].driver})" if specs.gpus else ""))
-    suggested = system.suggested_device(specs)
-    st.markdown(f"이 컴퓨터 추천 계산 장치: **{system.DEVICES[suggested]}** · 지금 설정: **{system.DEVICES[ss.device]}** "
-                "(사이드바 「💻 계산 장치」에서 바꿈)")
-    # 작업마다 지금 장치에 맞는 추천 (장치를 바꾸면 추천도 바뀜). 문구가 길어서 줄바꿈되는 표(st.table)로.
-    recs = recommendations()
-    st.table([{"작업": label, "장치": {"gpu": "GPU", "hybrid": "GPU+CPU", "cpu": "CPU"}[dev(t)],
-               "추천 모델 (지금 장치 기준)": recs[t]["text"], "지금 고른 모델": current_model(t),
-               "상태": ("✅ 추천대로" if is_recommended(t, recs[t]) else "↔ 추천과 다름") + " · " + system.fits(recs[t]["need"], specs, dev(t))}
-              for t, label in system.TASKS.items()], hide_index=True)
-    st.button("✨ 추천 모델로 맞추기", key="apply_rec_main", on_click=apply_recommended,
-              disabled=all(is_recommended(t, r) for t, r in recs.items()))
-    st.caption("GPU 메모리는 모델을 하나씩 쓸 때 기준입니다. 이 앱은 단계마다 모델을 바꿔 올리고(AI 생성 전에는 Ollama 모델을 내림) "
-               "생성 모델은 한동안 쓰지 않으면 내려서 GPU 메모리를 돌려줍니다.")
-
 MODE_LABELS = {"upload": "📼 영상으로 만들기", "ai": "✨ 영상 없이 AI로 만들기"}
 ss.setdefault("mode", "upload")
 
@@ -502,17 +573,51 @@ def close_project() -> None:
     ss.pop("project", None)
 
 
-recent_items = project.recent()
+def folder_mb(folder: Path) -> float:
+    return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) / 1024 ** 2
+
+
+def delete_recent(folder: Path, name: str) -> None:
+    """작업 폴더를 통째로 지운다. 지금 열려 있는 작업이면 닫는다.
+    (upload_id는 그대로 두어, 업로드 칸에 남은 파일 때문에 방금 지운 작업이 다시 만들어지지 않게 한다)"""
+    current = ss.get("project")
+    if current is not None and Path(current.dir).resolve() == folder.resolve():
+        ss.pop("project", None)
+    try:
+        project.delete(folder)
+        ss.flash = f"'{name}' 작업을 지웠습니다."
+    except OSError as e:
+        ss.flash = f"작업을 지우지 못했습니다 (다른 프로그램이 파일을 쓰는 중일 수 있음): {e}"
+
+
+@st.dialog("작업 지우기")
+def confirm_delete_recent(folder: Path, name: str, results: int) -> None:
+    st.markdown(f"**{name}** 작업을 지울까요?")
+    st.caption(f"폴더 `{folder.name}` · {folder_mb(folder):,.0f}MB")
+    st.warning(f"올린 영상, 분석 결과, 쇼츠 구성, 만든 쇼츠 {results}개(영상·자막·썸네일)가 모두 지워지며 되돌릴 수 없습니다. "
+               "필요한 결과는 먼저 다운로드하세요.")
+    col_yes, col_no = st.columns(2)
+    if col_yes.button("🗑 지우기", type="primary", width="stretch"):
+        delete_recent(folder, name)
+        st.rerun()
+    if col_no.button("취소", width="stretch"):
+        st.rerun()
+
+
+recent_items = project.recent(limit=50)
 with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
     if not recent_items:
         st.caption("아직 작업이 없습니다.")
-    for item in recent_items[:10]:
-        col_name, col_info, col_open = st.columns([4, 3, 1])
-        icon = "✨" if item["kind"] == "ai" else "📼"
-        col_name.markdown(f"{icon} **{item['name']}**")
-        status = "분석 완료" if item["analyzed"] else "분석 전"
-        col_info.caption(f"{item['updated']} · {status} · 만든 쇼츠 {item['results']}개")
-        col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
+    with st.container(height=min(420, 60 + 56 * len(recent_items)) if recent_items else "content", border=False):
+        for item in recent_items:
+            col_name, col_info, col_open, col_del = st.columns([4, 3, 1, 0.6], vertical_alignment="center")
+            icon = "✨" if item["kind"] == "ai" else "📼"
+            col_name.markdown(f"{icon} **{item['name']}**")
+            status = "분석 완료" if item["analyzed"] else "분석 전"
+            col_info.caption(f"{item['updated']} · {status} · 만든 쇼츠 {item['results']}개")
+            col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
+            if col_del.button("🗑", key=f"delrecent_{item['dir'].name}", help="이 작업 지우기 (확인 후)"):
+                confirm_delete_recent(item["dir"], item["name"], item["results"])
 
 st.radio("만드는 방식", list(MODE_LABELS), format_func=MODE_LABELS.get, horizontal=True, key="mode",
          on_change=close_project, label_visibility="collapsed")
@@ -550,12 +655,12 @@ def model_table() -> None:
     """어떤 단계를 어떤 AI 모델이 하는지 보여 준다."""
     rows = [
         {"단계": "대본·장면 구성, 장면 설명 → 영어 프롬프트", "모델": f"{llm_model or '(Ollama 모델 없음)'}",
-         "만든 곳": "Ollama (사이드바 「LLM」에서 바꿈)", "하는 일": "주제로 제목·장면별 나레이션·장면 설명을 씀"},
+         "만든 곳": "Ollama (설정 「🧠 대본·구성」에서 바꿈)", "하는 일": "주제로 제목·장면별 나레이션·장면 설명을 씀"},
         *[{"단계": label, "모델": generate.MODEL_INFO[k]["name"], "만든 곳": f"{generate.MODEL_INFO[k]['by']} · {generate.MODEL_INFO[k]['repo']}",
            "하는 일": f"{generate.MODEL_INFO[k]['what']} ({generate.MODEL_INFO[k]['speed']})"}
-          for k, label in (("image", "장면: AI 이미지 + 움직임"), ("video", "장면: AI 동영상"), ("music", "배경음악 (사이드바)"))],
+          for k, label in (("image", "장면: AI 이미지 + 움직임"), ("video", "장면: AI 동영상"), ("music", "배경음악 (설정 「🔊 소리·배경음악」)"))],
         {"단계": "나레이션 음성", "모델": "Edge TTS" if ss.engine == "edge" else "Chatterbox Multilingual",
-         "만든 곳": "사이드바 「목소리 엔진」", "하는 일": "나레이션을 읽고 단어 시간으로 자막을 맞춤"},
+         "만든 곳": "설정 「🎙️ 나레이션 목소리」", "하는 일": "나레이션을 읽고 단어 시간으로 자막을 맞춤"},
     ]
     with st.expander("🤖 사용하는 AI 모델", expanded=True):
         st.table(rows, hide_index=True)
@@ -570,7 +675,7 @@ if proj is None:  # 영상 없이 AI로: 주제 → 대본·장면 구성
     st.radio("장면 만드는 방식", list(AI_ENGINES), format_func=AI_ENGINES.get, key="ai_engine", horizontal=True,
              help="AI 이미지 + 움직임은 장면당 몇 초, AI 동영상은 장면당 1분 안팎 걸립니다.")
     model_table()
-    st.caption("쇼츠 길이·말투·목소리·배경음악·자막은 사이드바 설정을 씁니다. "
+    st.caption("쇼츠 길이·말투·목소리·배경음악·자막은 사이드바 「🛠️ 세부 설정」을 씁니다. "
                "AI가 쓴 대본은 사실과 다를 수 있으니 2단계에서 꼭 확인하세요.")
     if st.button("1단계 · AI 대본 + 장면 구성", type="primary",
                  disabled=llm_model is None or not ss.get("ai_topic", "").strip()):
@@ -951,7 +1056,7 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
         replan_label = ("🔄 대본 다시 만들기" if p.kind == "ai" else
                         "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기")
         if st.button(replan_label, key=f"replan_{sid}", disabled=llm_model is None,
-                     help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 사이드바의 말투·길이가 반영됩니다."):
+                     help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 「🧠 대본·구성」의 말투·길이가 반영됩니다."):
             with st.spinner("다시 구성하는 중..."):
                 replan_short(p, short)
             st.rerun()
@@ -1024,7 +1129,7 @@ if proj.kind == "upload" and (len(proj.shorts) > 1 or ss.short_count > 1):
     col_count, col_all_plan, col_all_make = st.columns([2, 1, 1])
     col_count.markdown(f"**쇼츠 {len(proj.shorts)}편** · 한 영상에서 서로 다른 주제로 나눴습니다.")
     if col_all_plan.button(f"🔄 {ss.short_count}편으로 다시 나누기", disabled=llm_model is None,
-                           help="사이드바의 「쇼츠 개수」만큼 주제를 다시 나누고 편마다 구성합니다."):
+                           help="「🧠 대본·구성」의 「쇼츠 개수」만큼 주제를 다시 나누고 편마다 구성합니다."):
         with st.spinner(f"쇼츠 {ss.short_count}편으로 나누는 중..."):
             make_plan(proj)
         st.rerun()

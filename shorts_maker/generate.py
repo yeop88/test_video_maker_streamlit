@@ -145,7 +145,7 @@ def available() -> tuple[bool, str]:
     if not loads:
         return False, "AI 생성 환경(.venv-gen)을 불러오지 못했습니다."
     if any(d != "cpu" for d in task_devices.values()) and not has_gpu:
-        return False, "생성 환경에서 GPU를 찾지 못했습니다. 사이드바 「계산 장치」를 「CPU만」으로 바꾸면 (느리지만) 쓸 수 있습니다."
+        return False, "생성 환경에서 GPU를 찾지 못했습니다. 설정 「💻 컴퓨터·AI 모델」에서 계산 장치를 「CPU만」으로 바꾸면 (느리지만) 쓸 수 있습니다."
     return True, ""
 
 

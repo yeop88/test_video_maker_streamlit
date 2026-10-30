@@ -1,4 +1,6 @@
-"""사이드바 프리셋 저장·불러오기·삭제를 Streamlit AppTest로 확인한다 (GPU 불필요, Ollama는 실행 중이면 사용).
+"""사이드바 프리셋 저장·불러오기·삭제와 설정 팝업을 Streamlit AppTest로 확인한다 (GPU 불필요, Ollama는 실행 중이면 사용).
+
+세부 설정은 사이드바 버튼을 누르면 뜨는 팝업(st.dialog)에 있으므로, 값을 바꿀 때는 open_group으로 팝업을 연다.
 
 사용법 (프로젝트 루트에서):
     .venv\\Scripts\\python tests\\test_presets_ui.py
@@ -37,16 +39,31 @@ def caption(at):
     return " ".join(c.value for c in at.sidebar.caption)
 
 
+def open_group(at, label):
+    """사이드바의 설정 분류 버튼을 눌러 팝업을 연다."""
+    next(b for b in at.sidebar.button if b.label == label).click().run()
+    return at
+
+
 at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
 check("첫 화면 예외 없음", not at.exception, at.exception)
 options = at.sidebar.selectbox(key="preset_select").options
 check("기본 제공 프리셋 4개 표시", len(options) == 4, options)
-check("기본값 적용", at.sidebar.slider(key="font_size").value == 72 and at.session_state["engine"] == "edge")
+check("기본값 적용", at.session_state["font_size"] == 72 and at.session_state["engine"] == "edge")
+check("설정 분류 버튼 5개", sum(b.label in ("🧠 대본·구성", "🎙️ 나레이션 목소리", "🔊 소리·배경음악", "🎬 화면·자막",
+                                        "💻 컴퓨터·AI 모델") for b in at.sidebar.button) == 5)
+open_group(at, "🎬 화면·자막")
+check("팝업이 열리고 위젯이 보임", at.slider(key="font_size").value == 72, [s.key for s in at.slider])
 
-# 저장
-at.sidebar.slider(key="target_sec").set_value(60)
-at.sidebar.slider(key="font_size").set_value(90)
-at.sidebar.selectbox(key="edge_voice").select("ko-KR-InJoonNeural")
+# 저장 (팝업에서 바꾼 값은 팝업을 닫아도 남아 있어야 함)
+at.slider(key="font_size").set_value(90).run()
+open_group(at, "🧠 대본·구성")
+at.slider(key="target_sec").set_value(60).run()
+open_group(at, "🎙️ 나레이션 목소리")
+at.selectbox(key="edge_voice").select("ko-KR-InJoonNeural").run()
+at.run()  # 팝업 닫힘
+check("팝업을 닫아도 바꾼 값 유지", at.session_state["font_size"] == 90 and at.session_state["target_sec"] == 60
+      and at.session_state["edge_voice"] == "ko-KR-InJoonNeural")
 at.sidebar.text_input(key="preset_new_name").input("테스트 프리셋")
 button(at, "저장").click()
 at.run()
@@ -60,24 +77,31 @@ check("목록에 추가 + 선택됨", at.sidebar.selectbox(key="preset_select").
 check("현재 프리셋 표시", "현재: 테스트 프리셋" in caption(at) and "수정됨" not in caption(at), caption(at))
 
 # 수정 표시
-at.sidebar.slider(key="font_size").set_value(50).run()
+open_group(at, "🎬 화면·자막")
+at.slider(key="font_size").set_value(50).run()
+at.run()
 check("바꾸면 (수정됨)", "(수정됨)" in caption(at), caption(at))
 
 # 기본 불러오기
 at.sidebar.selectbox(key="preset_select").select("기본").run()
 button(at, "불러오기").click().run()
-check("기본 불러오기", at.sidebar.slider(key="font_size").value == 72
-      and at.sidebar.slider(key="target_sec").value == 40, at.sidebar.slider(key="font_size").value)
+check("기본 불러오기", at.session_state["font_size"] == 72 and at.session_state["target_sec"] == 40,
+      at.session_state["font_size"])
 
 # 숨겨진 설정 유지: Chatterbox를 고르면 Edge 목소리 위젯이 사라지는데, 불러온 값이 지워지면 안 됨
 at.sidebar.selectbox(key="preset_select").select("테스트 프리셋").run()
 button(at, "불러오기").click().run()
-at.sidebar.radio(key="engine").set_value("chatterbox").run()
-at.sidebar.radio(key="engine").set_value("edge").run()
-check("엔진을 바꿨다 돌아와도 목소리 유지", at.sidebar.selectbox(key="edge_voice").value == "ko-KR-InJoonNeural",
-      at.sidebar.selectbox(key="edge_voice").value)
-check("사용자 프리셋 값 복원", at.sidebar.slider(key="font_size").value == 90
-      and at.sidebar.slider(key="target_sec").value == 60)
+# AppTest에서는 값을 바꾸면 스크립트 전체가 다시 돌아 팝업이 닫히므로 단계마다 다시 연다 (브라우저에서는 팝업이 그대로 열려 있음)
+open_group(at, "🎙️ 나레이션 목소리")
+at.radio(key="engine").set_value("chatterbox").run()
+open_group(at, "🎙️ 나레이션 목소리")
+check("Chatterbox를 고르면 Edge 목소리 칸이 사라짐", "edge_voice" not in [x.key for x in at.selectbox])
+at.radio(key="engine").set_value("edge").run()
+open_group(at, "🎙️ 나레이션 목소리")
+check("엔진을 바꿨다 돌아와도 목소리 유지", at.selectbox(key="edge_voice").value == "ko-KR-InJoonNeural",
+      at.selectbox(key="edge_voice").value)
+at.run()
+check("사용자 프리셋 값 복원", at.session_state["font_size"] == 90 and at.session_state["target_sec"] == 60)
 
 # 기본 제공 프리셋 이름으로 저장 → 거부
 at.sidebar.text_input(key="preset_new_name").input("기본")
@@ -88,8 +112,7 @@ check("기본 제공 이름 덮어쓰기 거부", any("덮어쓸 수 없습니�
 at.sidebar.selectbox(key="preset_select").select("감성 브이로그").run()
 check("기본 제공 프리셋 삭제 불가", button(at, "삭제").disabled)
 button(at, "불러오기").click().run()
-check("기본 제공 프리셋 불러오기", at.session_state["style"] == "감성 스토리"
-      and at.sidebar.slider(key="target_sec").value == 30)
+check("기본 제공 프리셋 불러오기", at.session_state["style"] == "감성 스토리" and at.session_state["target_sec"] == 30)
 
 # 손상된 파일, 범위 밖 값, 설치 안 된 모델
 folder = config.WORK_DIR / "presets"
@@ -103,10 +126,10 @@ check("손상된 파일은 오류 표시", any("손상" in m for m in at.sidebar
 model_before = at.session_state["llm_model"]
 at.sidebar.selectbox(key="preset_select").select("이상한 값").run()
 button(at, "불러오기").click().run()
-check("범위 밖 값은 범위 안으로", at.sidebar.slider(key="font_size").value == 110)
+check("범위 밖 값은 범위 안으로", at.session_state["font_size"] == 110)
 check("잘못된 선택지는 기본값", at.session_state["engine"] == "edge")
 check("색은 대문자로", at.session_state["color"] == "#00FF00")
-if at.sidebar.selectbox(key="llm_model") is not None and model_before:
+if model_before:
     check("설치 안 된 모델은 지금 모델 유지", at.session_state["llm_model"] == model_before
           and any("설치되어 있지 않아" in m for m in messages(at)), messages(at))
 
