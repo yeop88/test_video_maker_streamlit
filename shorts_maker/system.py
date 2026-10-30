@@ -17,12 +17,26 @@ from . import config
 DEVICES = {
     "gpu": "GPU만 (가장 빠름)",
     "hybrid": "GPU + CPU 함께 (GPU 메모리 아끼기)",
+    "split": "작업별로 나누기 (예: 영상은 GPU, 나머지는 CPU)",
     "cpu": "CPU만 (GPU 없이, 느림)",
 }
+# 「작업별로 나누기」에서 장치를 따로 고르는 작업
+TASKS = {
+    "llm": "장면 이해·대본 (Ollama LLM)",
+    "asr": "대사 인식 (Whisper)",
+    "tts": "나레이션 음성 (Chatterbox)",
+    "image": "AI 이미지",
+    "video": "AI 동영상",
+    "music": "AI 배경음악",
+}
+TASK_DEVICES = {"gpu": "GPU", "cpu": "CPU"}
+SPLIT_DEFAULT = {"llm": "cpu", "asr": "cpu", "tts": "cpu", "image": "cpu", "video": "gpu", "music": "cpu"}
 DEVICE_HELP = (
     "GPU만: 모델을 GPU에 올려 가장 빠릅니다.\n\n"
     "GPU + CPU 함께: 큰 모델은 RAM에 두고 쓸 부분만 GPU로 옮깁니다 (GPU 메모리가 작을 때, 조금 느림). "
     "Ollama는 GPU에 다 안 들어가는 층을 CPU에서 돌립니다.\n\n"
+    "작업별로 나누기: 작업마다 GPU·CPU를 고릅니다. 예를 들어 AI 동영상만 GPU에 두고 나머지를 CPU로 돌리면, "
+    "동영상을 만드는 동안 다른 작업이 GPU 메모리를 차지하지 않습니다.\n\n"
     "CPU만: GPU를 쓰지 않습니다. 대사 인식·장면 이해·AI 이미지가 몇 배~수십 배 느리고, AI 동영상은 사실상 쓸 수 없습니다."
 )
 
@@ -151,7 +165,7 @@ def _device_file():
 
 
 def load_machine(s: Specs) -> dict:
-    """{device, video_model, ltx_quant}. 저장된 값이 없거나 잘못되면 이 컴퓨터에 맞는 기본값."""
+    """{device, split, video_model, ltx_quant, image_model}. 저장된 값이 없거나 잘못되면 이 컴퓨터에 맞는 기본값."""
     try:
         saved = json.loads(_device_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -162,7 +176,16 @@ def load_machine(s: Specs) -> dict:
     for key, choices in MACHINE_CHOICES.items():
         if saved.get(key) in choices:
             values[key] = saved[key]
+    split = saved.get("split") if isinstance(saved.get("split"), dict) else {}
+    values["split"] = {t: split.get(t) if split.get(t) in TASK_DEVICES else SPLIT_DEFAULT[t] for t in TASKS}
     return values
+
+
+def task_device(device: str, split: dict, task: str) -> str:
+    """작업 하나가 쓸 장치 ("gpu" | "hybrid" | "cpu"). 「작업별로 나누기」면 작업마다 고른 값."""
+    if device == "split":
+        return split.get(task, SPLIT_DEFAULT[task])
+    return device
 
 
 def save_machine(**values) -> None:
@@ -175,37 +198,55 @@ def save_machine(**values) -> None:
     _device_file().write_text(json.dumps(saved), encoding="utf-8")
 
 
-# 작업별 추천 모델: (작업, GPU 추천, CPU 추천, 필요한 GPU 메모리 GB(GPU 추천 기준))
-RECOMMENDED = [
-    ("장면 이해·구간 고르기·나레이션·대본 (Ollama LLM)",
-     "qwen3.5:9b — 화면을 보는 비전 모델, 약 6.6GB. GPU 메모리 6GB 이하면 qwen3.5:4b",
-     "qwen3.5:4b (약 3.4GB, RAM 8GB 이상) — 9b는 장면 하나 설명에 수십 초. 더 느린 PC는 qwen3.5:2b", 7),
-    ("대사 인식 (Whisper)",
-     "whisper-large-v3-turbo (fp16, 약 1.6GB) — 지금 쓰는 모델",
-     "whisper-large-v3-turbo도 되지만 영상 길이의 1~3배 시간. 1분 이하 영상을 권장", 2),
-    ("나레이션 음성",
-     "Chatterbox Multilingual (약 3GB) — 목소리 샘플로 복제, 감정 조절",
-     "Edge TTS — 인터넷 음성 합성이라 PC 성능과 상관없이 빠름 (Chatterbox는 CPU에서 문장당 수십 초)", 4),
-    ("AI 장면 — 이미지 + 움직임",
-     "FLUX.2 [klein] 4B (최신, 프롬프트를 잘 따름, 약 13GB를 번갈아) 또는 DreamShaper XL Lightning (약 7GB, 몇 초). "
-     "최고 화질은 FLUX.2 [klein] 9B 4bit (비상업). 가장 빠른 것은 SDXL-Turbo",
-     "SDXL-Turbo (fp32) — 장면당 30초~1분 정도. CPU에서 쓸 수 있는 유일한 AI 장면 방식", 8),
-    ("AI 장면 — 동영상",
-     "LTX-2.5 22B 4bit (GPU 16GB 이상 + RAM 32GB 이상, 처음 한 번 약 71GB 내려받기) — 화질이 훨씬 좋음, 장면당 몇 분. "
-     "8bit는 RAM 64GB 이상. GPU 12GB 이하면 LTX-Video 2B (장면당 1분 안팎, 화질 낮음)",
-     "추천하지 않음 — 장면 하나에 수십 분~몇 시간. AI 이미지 + 움직임을 쓰세요", 16),
-    ("배경음악",
-     "MusicGen small (약 2GB) — 20초 곡에 약 40초",
-     "MusicGen small — 20초 곡에 몇 분", 3),
-]
+def recommend(task: str, device: str, s: Specs) -> dict:
+    """작업과 그 작업의 장치에 맞는 추천.
+    {"text": 화면 문구, "choice": 설정에 넣을 값(없으면 None), "key": 바꿀 설정 이름, "need": 필요한 GPU 메모리 GB}.
+    계산 장치를 바꾸면 추천도 바뀐다 (GPU면 GPU 메모리에 맞는 큰 모델, CPU면 가볍고 빠른 모델)."""
+    gpu = device != "cpu" and bool(s.gpus)
+    vram, ram = s.vram_gb, s.ram_gb
+    if task == "llm":
+        if gpu and vram >= 8:
+            return {"text": "qwen3.5:9b — 화면을 보는 비전 모델 (약 6.6GB)", "choice": "qwen3.5:9b", "key": "llm_model", "need": 7}
+        return {"text": "qwen3.5:4b — 비전 모델 (약 3.4GB). " + ("CPU에서 9b보다 빠름 (9b는 짧은 답에 약 12초, 장면 설명이 많으면 수 분)" if not gpu else "GPU 메모리가 작아서"),
+                "choice": "qwen3.5:4b", "key": "llm_model", "need": 4}
+    if task == "asr":
+        return {"text": "whisper-large-v3-turbo (fp16, 약 1.6GB)" if gpu else
+                "whisper-large-v3-turbo (fp32) — 대사 6초에 약 4초 (GPU보다 몇 배 느림, 긴 영상은 오래 걸림)",
+                "choice": None, "key": None, "need": 2}
+    if task == "tts":
+        if gpu and vram >= 6:
+            return {"text": "Chatterbox — 목소리 복제·감정 조절 (약 3GB)", "choice": "chatterbox", "key": "engine", "need": 4}
+        return {"text": "Edge TTS — 인터넷 음성 합성이라 PC 성능과 상관없이 빠름 (목소리 복제가 필요하면 Chatterbox도 CPU에서 문장당 약 8초)",
+                "choice": "edge", "key": "engine", "need": 0}
+    if task == "image":
+        if gpu and vram >= 14:
+            return {"text": "FLUX.2 [klein] 9B 4bit — 최고 화질, 장당 약 7초", "choice": "flux2_klein_9b", "key": "image_model", "need": 12}
+        if gpu and vram >= 12:
+            return {"text": "FLUX.2 [klein] 4B — 프롬프트를 잘 따름, 장당 약 7초", "choice": "flux2_klein_4b", "key": "image_model", "need": 12}
+        if gpu and vram >= 8:
+            return {"text": "DreamShaper XL Lightning — 장당 1~2초", "choice": "dreamshaper_lightning", "key": "image_model", "need": 8}
+        if gpu:
+            return {"text": "SDXL-Turbo (GPU + CPU 함께) — 가장 가벼움", "choice": "sdxl_turbo", "key": "image_model", "need": 6}
+        return {"text": "SDXL-Turbo (fp32) — CPU에서 가장 빠름, 장당 20~30초 (DreamShaper XL 약 1분, FLUX.2 4B 약 2분 30초)",
+                "choice": "sdxl_turbo", "key": "image_model", "need": 0}
+    if task == "video":
+        if gpu and vram >= 14 and ram >= 32:
+            return {"text": "LTX-2.5 22B 4bit — 화질이 훨씬 좋음, 장면당 약 1분 15초 (처음 한 번 약 71GB 내려받기)",
+                    "choice": "ltx25", "key": "video_model", "need": 13}
+        if gpu and vram >= 10:
+            return {"text": "LTX-Video 2B — 장면당 1분 안팎, 화질 낮음", "choice": "ltx2b", "key": "video_model", "need": 10}
+        return {"text": "추천하지 않음 — CPU나 작은 GPU에서는 장면 하나에 수십 분~몇 시간. 「AI 이미지 + 움직임」을 쓰세요",
+                "choice": "ltx2b", "key": "video_model", "need": 0}
+    return {"text": "MusicGen small — 20초 곡에 약 40초" if gpu else "MusicGen small (fp32) — 10초 곡에 약 50초",
+            "choice": None, "key": None, "need": 3}
 
 
 def fits(need_gb: float, s: Specs, device: str) -> str:
-    """이 PC·장치 설정에서 GPU 추천 모델을 쓸 수 있는지 한 줄 판정."""
+    """이 PC·장치 설정에서 추천 모델을 쓸 수 있는지 한 줄 판정."""
     if device == "cpu" or not s.gpus:
-        return "CPU 추천을 씀"
+        return "CPU로 실행"
     if s.vram_gb >= need_gb:
-        return "✅ GPU 추천 가능"
+        return "✅ GPU 메모리 충분"
     if device == "hybrid" and s.ram_gb >= 32:
         return "⚠️ GPU+CPU로 가능 (느림)"
     return "❌ GPU 메모리 부족"

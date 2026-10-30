@@ -356,7 +356,7 @@ def test_ai_mode(page, out: Path):
     page.wait_for_timeout(1000)
     main_text = page.locator('[data-testid="stMain"]').inner_text()
     check("컴퓨터 사양 섹션 (GPU·RAM, CPU/GPU 추천)",
-          "RAM" in main_text and "GPU로 돌릴 때 추천" in main_text and "CPU로 돌릴 때 추천" in main_text)
+          "RAM" in main_text and "추천 모델 (지금 장치 기준)" in main_text and "지금 고른 모델" in main_text)
     side = page.locator('[data-testid="stSidebar"]')
     check("사이드바 계산 장치 설정", side.get_by_text("GPU + CPU 함께 (GPU 메모리 아끼기)").count() == 1)
     page.get_by_label("어떤 쇼츠를 만들까요?").fill("비 오는 날 창가에서 즐기는 따뜻한 차 한 잔")
@@ -436,6 +436,36 @@ def test_restore(page):
     check("만든 쇼츠 유지", page.get_by_role("button", name="⬇️ 다운로드").count() == 1)
 
 
+def test_device_split(page):
+    """계산 장치 「작업별로 나누기」: 작업별 장치 선택이 나오고, 장치를 바꾸면 추천 모델이 바뀌고, 추천대로 맞추기가 된다."""
+    open_app(page)
+    main = page.locator('[data-testid="stMain"]')
+    side = page.locator('[data-testid="stSidebar"]')
+    main.get_by_text("💻 컴퓨터 사양과 추천 모델").click()
+    page.wait_for_timeout(1000)
+    before = main.inner_text()
+    side.get_by_role("radio", name="작업별로 나누기 (예: 영상은 GPU, 나머지는 CPU)").check(force=True)
+    page.wait_for_timeout(2500)
+    labels = ["장면 이해·대본 (Ollama LLM)", "대사 인식 (Whisper)", "나레이션 음성 (Chatterbox)", "AI 이미지", "AI 동영상", "AI 배경음악"]
+    shown = [label for label in labels if side.get_by_text(label, exact=True).count() >= 1]
+    check("작업별로 나누기 → 작업 6개 장치 선택", len(shown) == 6, shown)
+    if main.get_by_text("💻 컴퓨터 사양과 추천 모델").count() and "추천 모델 (지금 장치 기준)" not in main.inner_text():
+        main.get_by_text("💻 컴퓨터 사양과 추천 모델").click()
+        page.wait_for_timeout(1000)
+    after = main.inner_text()
+    check("장치를 바꾸면 추천 모델이 바뀜 (이미지: GPU → CPU)",
+          "FLUX.2 [klein] 9B 4bit" in before and "SDXL-Turbo (fp32)" in after and "Edge TTS" in after,
+          "GPU일 때 FLUX.2 9B, CPU일 때 SDXL-Turbo·Edge TTS")
+    check("기본 나누기: 동영상만 GPU", "AI 동영상 GPU" in after and "AI 이미지 CPU" in after)
+    page.get_by_role("button", name="✨ 추천 모델로 맞추기").first.click()
+    page.wait_for_timeout(2500)
+    check("추천 모델로 맞추기 → 이미지 SDXL-Turbo, 음성 Edge",
+          side.get_by_role("radio", name="SDXL-Turbo (가장 빠름, 화질 보통)").is_checked()
+          and side.get_by_role("radio", name="Edge TTS (기본 목소리, 인터넷 필요)").is_checked())
+    side.get_by_role("radio", name="GPU만 (가장 빠름)").check(force=True)  # 다음 테스트를 위해 되돌림
+    page.wait_for_timeout(1500)
+
+
 def main():
     work = Path(tempfile.mkdtemp(prefix="ui_test_"))
     lake = make_video(work, "lake", WALL / "ThemeC/img28.jpg", 14,
@@ -474,6 +504,7 @@ def main():
                 test_restore(page)
                 test_series_ui(page, combo)
                 test_ai_mode(page, work)
+                test_device_split(page)
             browser.close()
     finally:
         died = server.poll() is not None

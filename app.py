@@ -66,20 +66,78 @@ specs = get_specs()
 machine = system.load_machine(specs)  # 계산 장치·동영상 모델·양자화 (프리셋에는 넣지 않고 이 컴퓨터에 저장)
 for key in ("device", "video_model", "ltx_quant", "image_model"):
     ss[key] = ss[key] if key in ss else machine[key]
-llm.DEVICE = ss.device
-generate.set_device(ss.device)
+for task in system.TASKS:  # 「작업별로 나누기」의 작업별 장치 (숨겨진 위젯 값은 지워지므로 매번 다시 넣음)
+    ss[f"dev_{task}"] = ss[f"dev_{task}"] if f"dev_{task}" in ss else machine["split"][task]
+
+
+def dev(task: str) -> str:
+    """작업 하나가 쓸 장치 ("gpu" | "hybrid" | "cpu")."""
+    return system.task_device(ss.device, {t: ss[f"dev_{t}"] for t in system.TASKS}, task)
+
+
+def apply_devices() -> None:
+    llm.DEVICE = dev("llm")
+    generate.set_task_devices({t: dev(t) for t in ("image", "video", "music")})
+
+
+apply_devices()
 generate.set_video_model(ss.video_model, ss.ltx_quant)
 generate.set_image_model(ss.image_model)
 
 
 def change_device() -> None:
     """계산 장치를 바꾸면 저장하고, 다른 장치에 올려 둔 Whisper·Chatterbox를 내린다."""
-    system.save_machine(device=ss.device)
+    system.save_machine(device=ss.device, split={t: ss[f"dev_{t}"] for t in system.TASKS})
     get_whisper.clear()
     get_chatterbox.clear()
-    llm.DEVICE = ss.device
-    generate.set_device(ss.device)
-    ss.preset_msg = ("info", f"계산 장치: {system.DEVICES[ss.device]}. 모델은 다음에 쓸 때 이 장치로 다시 불러옵니다.")
+    apply_devices()
+    ss.preset_msg = ("info", f"계산 장치: {system.DEVICES[ss.device]}. 모델은 다음에 쓸 때 이 장치로 다시 불러옵니다. "
+                             "추천 모델도 장치에 맞게 바뀌었습니다 (「✨ 추천 모델로 맞추기」로 한 번에 바꿀 수 있음).")
+
+
+def recommendations() -> dict:
+    """작업마다 지금 장치에 맞는 추천."""
+    return {t: system.recommend(t, dev(t), specs) for t in system.TASKS}
+
+
+def current_model(task: str) -> str:
+    if task == "llm":
+        return ss.llm_model or "(없음)"
+    if task == "asr":
+        return "whisper-large-v3-turbo"
+    if task == "tts":
+        return "Chatterbox" if ss.engine == "chatterbox" else "Edge TTS"
+    if task == "image":
+        return generate.IMAGE_MODELS[ss.image_model]["name"]
+    if task == "video":
+        return generate.MODEL_INFO["video"]["name"]
+    return "MusicGen small"
+
+
+def is_recommended(task: str, rec: dict) -> bool:
+    return rec["key"] is None or ss.get(rec["key"]) == rec["choice"]
+
+
+def apply_recommended() -> None:
+    """지금 장치에 맞는 추천 모델로 한 번에 바꾼다 (설치되지 않은 LLM은 건너뜀)."""
+    changed, skipped = [], []
+    for task, rec in recommendations().items():
+        if rec["key"] is None or ss.get(rec["key"]) == rec["choice"]:
+            continue
+        if rec["key"] == "llm_model" and rec["choice"] not in models:
+            skipped.append(f"{rec['choice']} (설치 안 됨: `ollama pull {rec['choice']}`)")
+            continue
+        ss[rec["key"]] = rec["choice"]
+        changed.append(f"{system.TASKS[task]} → {current_model(task)}")
+    if ss.video_model == "ltx25":
+        ss.ltx_quant = "nf4"
+    system.save_machine(video_model=ss.video_model, ltx_quant=ss.ltx_quant, image_model=ss.image_model)
+    generate.set_video_model(ss.video_model, ss.ltx_quant)
+    generate.set_image_model(ss.image_model)
+    text = "추천 모델로 맞췄습니다: " + ", ".join(changed) if changed else "이미 모두 추천 모델입니다."
+    if skipped:
+        text += " · 건너뜀: " + ", ".join(skipped)
+    ss.preset_msg = ("success" if changed else "info", text)
 
 
 def change_video_model() -> None:
@@ -218,16 +276,32 @@ with st.sidebar:
     suggested = system.suggested_device(specs)
     if ss.device != suggested:
         st.caption(f"이 컴퓨터 추천: {system.DEVICES[suggested]}")
+    if ss.device == "split":
+        with st.container(border=True):
+            for task, label in system.TASKS.items():
+                st.radio(label, list(system.TASK_DEVICES), format_func=system.TASK_DEVICES.get, key=f"dev_{task}",
+                         horizontal=True, on_change=change_device)
+    recs = recommendations()
+    off = [t for t, r in recs.items() if not is_recommended(t, r)]
+    st.button("✨ 추천 모델로 맞추기", on_click=apply_recommended, width="stretch", disabled=not off,
+              help="작업마다 지금 고른 장치(GPU/CPU)에 맞는 추천 모델로 바꿉니다: "
+                   + " · ".join(f"{system.TASKS[t]}: {recs[t]['text'].split(' — ')[0]}" for t in system.TASKS))
+    if off:
+        st.caption("추천과 다른 모델: " + ", ".join(system.TASKS[t] for t in off))
     st.radio("AI 이미지 모델", list(generate.IMAGE_MODELS), format_func=lambda k: generate.IMAGE_MODELS[k]["label"],
              key="image_model", on_change=change_video_model,
              help="AI 장면을 「AI 이미지 + 움직임」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다. "
                   "처음 쓰는 모델은 내려받느라 오래 걸립니다 (아래 「💻 컴퓨터 사양과 추천 모델」에 크기·라이선스).")
+    st.caption(f"추천 ({system.TASK_DEVICES.get(dev('image'), 'GPU')}): {recs['image']['text']}")
     image_ok, image_msg = generate.image_available()
     if not image_ok:
         st.warning(image_msg)
     st.radio("AI 동영상 모델", list(generate.VIDEO_MODELS), format_func=generate.VIDEO_MODELS.get, key="video_model",
              on_change=change_video_model,
              help="AI 장면을 「AI 동영상」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다.")
+    st.caption(f"추천 ({system.TASK_DEVICES.get(dev('video'), 'GPU')}): {recs['video']['text']}")
+    if dev("video") == "cpu" and ss.video_model == "ltx25":
+        st.warning("LTX-2.5는 GPU에서만 돌립니다. AI 동영상 장치를 GPU로 바꾸거나 LTX-Video 2B를 고르세요.")
     if ss.video_model == "ltx25":
         st.radio("LTX-2.5 양자화", list(generate.LTX_QUANTS), format_func=generate.LTX_QUANTS.get, key="ltx_quant",
                  on_change=change_video_model,
@@ -236,7 +310,7 @@ with st.sidebar:
         ltx_ok, ltx_msg = generate.ltx_status()
         if not ltx_ok:
             st.warning(ltx_msg)
-    if ss.device != "cpu" and not specs.gpus:
+    if any(dev(t) != "cpu" for t in system.TASKS) and not specs.gpus:
         st.warning("NVIDIA GPU를 찾지 못했습니다. GPU를 고르면 CPU로 돌아가거나 AI 생성이 막힙니다.")
     st.caption("사양과 장치별 추천 모델은 본문 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 볼 수 있습니다. 이 설정은 프리셋에 넣지 않고 이 컴퓨터에 저장합니다.")
 
@@ -273,7 +347,7 @@ with st.sidebar:
         setting_slider("감정 표현 강도", "exaggeration")
         if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (GPU, 몇 초)."):
             with st.spinner("목소리를 만드는 중..."):
-                engine = tts.ChatterboxEngine(get_chatterbox(ss.device), voices.sample_path(ss.voice_id), ss.exaggeration)
+                engine = tts.ChatterboxEngine(get_chatterbox(dev("tts")), voices.sample_path(ss.voice_id), ss.exaggeration)
                 ss.voice_preview = str(engine.synthesize_cached(PREVIEW_TEXT, config.WORK_DIR / "voices" / "preview"))
         if ss.get("voice_preview") and Path(ss.voice_preview).exists():
             st.audio(ss.voice_preview)
@@ -369,7 +443,9 @@ st.caption(
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
     "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
-with st.expander(f"💻 컴퓨터 사양과 추천 모델 · 지금: {system.DEVICES[ss.device]}"):
+device_summary = (" · ".join(f"{system.TASKS[t].split(' (')[0]} {system.TASK_DEVICES[dev(t)]}" for t in system.TASKS)
+                  if ss.device == "split" else system.DEVICES[ss.device])
+with st.expander(f"💻 컴퓨터 사양과 추천 모델 · 지금: {device_summary}"):
     gpu_text = ", ".join(f"{g.name} {g.vram_gb:.0f}GB" for g in specs.gpus) or "NVIDIA GPU 없음"
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("GPU (VRAM)", f"{specs.vram_gb:.0f} GB" if specs.gpus else "없음", help=gpu_text)
@@ -381,9 +457,14 @@ with st.expander(f"💻 컴퓨터 사양과 추천 모델 · 지금: {system.DEV
     suggested = system.suggested_device(specs)
     st.markdown(f"이 컴퓨터 추천 계산 장치: **{system.DEVICES[suggested]}** · 지금 설정: **{system.DEVICES[ss.device]}** "
                 "(사이드바 「💻 계산 장치」에서 바꿈)")
-    # 추천 문구가 길어서 줄바꿈되는 표(st.table)로 보여 준다
-    st.table([{"작업": task, "GPU로 돌릴 때 추천": gpu, "CPU로 돌릴 때 추천": cpu, "이 PC": system.fits(need, specs, ss.device)}
-              for task, gpu, cpu, need in system.RECOMMENDED], hide_index=True)
+    # 작업마다 지금 장치에 맞는 추천 (장치를 바꾸면 추천도 바뀜). 문구가 길어서 줄바꿈되는 표(st.table)로.
+    recs = recommendations()
+    st.table([{"작업": label, "장치": {"gpu": "GPU", "hybrid": "GPU+CPU", "cpu": "CPU"}[dev(t)],
+               "추천 모델 (지금 장치 기준)": recs[t]["text"], "지금 고른 모델": current_model(t),
+               "상태": ("✅ 추천대로" if is_recommended(t, recs[t]) else "↔ 추천과 다름") + " · " + system.fits(recs[t]["need"], specs, dev(t))}
+              for t, label in system.TASKS.items()], hide_index=True)
+    st.button("✨ 추천 모델로 맞추기", key="apply_rec_main", on_click=apply_recommended,
+              disabled=all(is_recommended(t, r) for t, r in recs.items()))
     st.caption("GPU 메모리는 모델을 하나씩 쓸 때 기준입니다. 이 앱은 단계마다 모델을 바꿔 올리고(AI 생성 전에는 Ollama 모델을 내림) "
                "생성 모델은 한동안 쓰지 않으면 내려서 GPU 메모리를 돌려줍니다.")
 
@@ -748,7 +829,7 @@ if run_analyze:
             st.write("✂️ 구간 자르기, 오디오 추출")
             job = pipeline.prepare_job(source, start, end)
             st.write("📝 대사 인식 (Whisper)")
-            pipeline.transcribe(job, get_whisper(ss.device))
+            pipeline.transcribe(job, get_whisper(dev("asr")))
             st.write("🖼️ 장면 캡처")
             pipeline.capture_frames(job)
             st.write(f"👀 장면 이해 ({llm_model})")
@@ -804,7 +885,7 @@ def ai_models_summary(cards: list[dict]) -> str:
 def make_engine():
     if ss.engine == "edge":
         return tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
-    return tts.ChatterboxEngine(get_chatterbox(ss.device), voices.sample_path(ss.voice_id), ss.exaggeration)
+    return tts.ChatterboxEngine(get_chatterbox(dev("tts")), voices.sample_path(ss.voice_id), ss.exaggeration)
 
 
 def build_short(p: project.Project, short: dict, engine) -> None:

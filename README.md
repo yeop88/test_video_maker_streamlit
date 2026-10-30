@@ -48,7 +48,7 @@
 
 ## 실행 환경
 
-- **NVIDIA GPU** (VRAM 12GB 이상 권장, RTX 4080 SUPER 16GB에서 테스트). GPU가 작거나 없으면 사이드바 「💻 계산 장치」에서 **GPU + CPU 함께** 또는 **CPU만**을 고릅니다 (느려짐). 앱 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 이 PC의 GPU·RAM·CPU와 작업별 GPU용·CPU용 추천 모델을 볼 수 있습니다.
+- **NVIDIA GPU** (VRAM 12GB 이상 권장, RTX 4080 SUPER 16GB에서 테스트). GPU가 작거나 없으면 사이드바 「💻 계산 장치」에서 **GPU + CPU 함께** 또는 **CPU만**을 고릅니다 (느려짐). **작업별로 나누기**를 고르면 LLM·대사 인식·음성·이미지·동영상·음악마다 GPU/CPU를 따로 정할 수 있습니다 (기본: AI 동영상만 GPU, 나머지는 CPU). 추천 모델은 작업마다 고른 장치에 맞게 바뀌고, 「✨ 추천 모델로 맞추기」로 한 번에 적용합니다. 앱 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 이 PC의 GPU·RAM·CPU와 작업별 GPU용·CPU용 추천 모델을 볼 수 있습니다.
 - Python 3.11
 - [Ollama](https://ollama.com) 실행 중 + 비전 모델 설치 (`ollama pull qwen3.5:9b`)
 - Edge TTS를 쓰려면 인터넷 연결

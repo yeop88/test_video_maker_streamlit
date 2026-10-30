@@ -36,11 +36,20 @@ def _nf4(cls, source: str, subfolder: str, saved: Path, note, library: str):
 
 
 class Flux2:
-    def __init__(self, repo: str, quant: str, models_dir: str, note):
+    def __init__(self, repo: str, quant: str, models_dir: str, note, device: str = "gpu"):
         from diffusers import Flux2KleinPipeline
 
         started = time.time()
+        self.device = "cpu" if device == "cpu" else "cuda"
         kwargs = {}
+        if self.device == "cpu":
+            # CPU: 4bit(bitsandbytes)는 GPU용이라 쓰지 않고 fp32로 RAM에 올린다 (9B는 RAM 약 70GB, 장당 몇 분)
+            note(f"{repo.split('/')[-1]}를 CPU(fp32)로 불러오는 중")
+            pipe = Flux2KleinPipeline.from_pretrained(repo, torch_dtype=torch.float32).to("cpu")
+            pipe.set_progress_bar_config(disable=True)
+            self.pipe = pipe
+            note(f"{repo.split('/')[-1]} 준비 완료 (CPU, {time.time() - started:.0f}초)")
+            return
         if quant == "nf4":
             import transformers
             from diffusers import Flux2Transformer2DModel
@@ -72,7 +81,7 @@ class Flux2:
         image = self.pipe(
             prompt=task["prompt"], width=int(task.get("width", 768)), height=int(task.get("height", 1344)),
             guidance_scale=float(task.get("guidance", 1.0)), num_inference_steps=steps,
-            generator=torch.Generator("cuda").manual_seed(int(task.get("seed", 0))),
+            generator=torch.Generator(self.device).manual_seed(int(task.get("seed", 0))),
             callback_on_step_end=callback,
         ).images[0]
         image.save(task["out"])

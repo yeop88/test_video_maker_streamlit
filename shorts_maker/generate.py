@@ -90,6 +90,8 @@ IDLE_STOP_SEC = 90  # 이만큼 쓰지 않으면 생성 프로세스를 끄고 G
 LTX_IDLE_STOP_SEC = 600  # LTX-2.5는 불러오는 데 오래 걸려서 더 오래 켜 둔다
 
 settings = {"video_model": "ltx2b", "ltx_quant": "nf4", "image_model": "sdxl_turbo"}
+# 생성 작업마다 쓸 장치 ("gpu" | "hybrid" | "cpu"). 요청에 실어 보내므로 한 프로세스에서 이미지는 CPU, 동영상은 GPU도 된다.
+task_devices = {"image": "gpu", "video": "gpu", "music": "gpu"}
 Progress = Callable[[int, int], None]
 
 
@@ -142,7 +144,7 @@ def available() -> tuple[bool, str]:
     loads, has_gpu = _probe
     if not loads:
         return False, "AI 생성 환경(.venv-gen)을 불러오지 못했습니다."
-    if service.device != "cpu" and not has_gpu:
+    if any(d != "cpu" for d in task_devices.values()) and not has_gpu:
         return False, "생성 환경에서 GPU를 찾지 못했습니다. 사이드바 「계산 장치」를 「CPU만」으로 바꾸면 (느리지만) 쓸 수 있습니다."
     return True, ""
 
@@ -194,7 +196,11 @@ def image_available() -> tuple[bool, str]:
 
 def video_available() -> tuple[bool, str]:
     """지금 고른 동영상 모델을 쓸 수 있는지."""
-    return ltx_status() if settings["video_model"] == "ltx25" else available()
+    if settings["video_model"] == "ltx25":
+        if task_devices["video"] == "cpu":
+            return False, "LTX-2.5는 GPU에서만 돌립니다. AI 동영상 장치를 GPU로 바꾸거나 LTX-Video 2B를 고르세요."
+        return ltx_status()
+    return available()
 
 
 def scene_available(engine: str) -> tuple[bool, str]:
@@ -254,24 +260,18 @@ class GenService:
         self.loaded_kind: str | None = None
         self.current_id: str | None = None
         self._cancelled = False
-        self.device = "gpu"  # 계산 장치 설정 ("gpu" | "hybrid" | "cpu"), 프로세스를 켤 때 넘긴다
         self.proc_args: list[str] = []
-
-    def set_device(self, device: str) -> None:
-        """계산 장치를 바꾼다. 켜 둔 프로세스는 다음 작업 때 새 설정으로 다시 켠다."""
-        self.device = device
 
     def args(self) -> list[str]:
         if self.name == "ltx":
             return ["--quant", settings["ltx_quant"], "--models-dir", str(models_dir())]
-        return ["--device", self.device]
+        return []  # 장치는 요청마다 실어 보낸다 (task["device"])
 
     def _start(self) -> None:
         ok, message = ((True, "") if LTX_PYTHON.exists() else (False, "최신 생성 환경(.venv-ltx)이 없습니다.")) \
             if self.name == "ltx" else available()
         if not ok:
             raise RuntimeError(message)
-        _free_gpu()
         env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         self.proc_args = self.args()
         self.proc = subprocess.Popen(
@@ -317,11 +317,13 @@ class GenService:
     def run(self, kind: str, task: dict, request_id: str = "", on_step: Progress | None = None,
             on_loading: Callable[[str], None] | None = None) -> None:
         """작업 하나를 끝날 때까지 실행한다. 실패하면 RuntimeError, cancel()로 멈추면 Cancelled."""
+        if task.get("device", "gpu") != "cpu":
+            _free_gpu()  # GPU를 쓰는 생성 전에 Ollama 모델을 GPU에서 내린다
         with self.lock:
             for other in SERVICES:  # 다른 생성 환경이 GPU에 모델을 올려 두고 있으면 끈다
                 if other is not self:
                     other._shutdown()
-            if self.alive() and self.proc_args != self.args():  # 계산 장치·양자화 설정을 바꿨으면 다시 켬
+            if self.alive() and self.proc_args != self.args():  # 양자화 설정을 바꿨으면 다시 켬
                 self.proc.kill()
                 self.proc.wait()
             if not self.alive():
@@ -396,8 +398,9 @@ def stop_idle() -> None:
     ltx_service.stop_if_idle(LTX_IDLE_STOP_SEC)
 
 
-def set_device(device: str) -> None:
-    service.set_device(device)
+def set_task_devices(devices: dict) -> None:
+    """생성 작업(image·video·music)마다 쓸 장치."""
+    task_devices.update({k: v for k, v in devices.items() if k in task_devices})
 
 
 # ───────────────────────── 장면 ─────────────────────────
@@ -412,12 +415,13 @@ def scene_job(scene: dict) -> tuple[str, dict, Path]:
         quant = settings["ltx_quant"]
         out = cache_dir() / f"ltx25_{_key('ltx25', quant, prompt, seed, LTX25_SIZE, LTX25_FRAMES)}.mp4"
         return "ltx25", {"prompt": prompt, "negative": LTX25_NEGATIVE, "seed": seed, "width": LTX25_SIZE[0],
-                         "height": LTX25_SIZE[1], "frames": LTX25_FRAMES, "fps": VIDEO_FPS, "out": str(out)}, out
+                         "height": LTX25_SIZE[1], "frames": LTX25_FRAMES, "fps": VIDEO_FPS, "out": str(out),
+                         "device": "gpu"}, out
     if scene.get("engine", "image") == "video":
         out = cache_dir() / f"vid_{_key('video', prompt, seed, VIDEO_SIZE, VIDEO_FRAMES)}.mp4"
         return "video", {"prompt": prompt, "negative": NEGATIVE, "seed": seed, "width": VIDEO_SIZE[0],
                          "height": VIDEO_SIZE[1], "frames": VIDEO_FRAMES, "fps": VIDEO_FPS,
-                         "steps": VIDEO_STEPS, "out": str(out)}, out
+                         "steps": VIDEO_STEPS, "out": str(out), "device": task_devices["video"]}, out
     model_id = settings["image_model"]
     model = IMAGE_MODELS[model_id]
     w, h = model["size"]
@@ -425,7 +429,7 @@ def scene_job(scene: dict) -> tuple[str, dict, Path]:
     key = _key("image", prompt, seed, IMAGE_SIZE) if model_id == "sdxl_turbo" else _key("image", model_id, prompt, seed)
     out = cache_dir() / f"img_{key}.png"
     task = {"model": model["repo"], "prompt": prompt, "seed": seed, "width": w, "height": h,
-            "steps": model["steps"], "guidance": model["guidance"], "out": str(out)}
+            "steps": model["steps"], "guidance": model["guidance"], "out": str(out), "device": task_devices["image"]}
     if model["env"] == "ltx":
         return "flux2", {**task, "quant": model.get("quant", "")}, out
     return "image", {**task, "negative": NEGATIVE, "scheduler": model.get("scheduler", "")}, out
@@ -492,7 +496,7 @@ def music(prompt: str, seconds: float, on_progress: Progress | None = None) -> P
     seconds = min(30.0, max(5.0, seconds))
     out = cache_dir() / f"music_{_key('music', prompt, seconds)}.wav"
     if not out.exists():
-        run_job("music", {"prompt": prompt, "seconds": seconds, "out": str(out)})
+        run_job("music", {"prompt": prompt, "seconds": seconds, "out": str(out), "device": task_devices["music"]})
         if on_progress:
             on_progress(1, 1)
     return out

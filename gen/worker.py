@@ -35,9 +35,15 @@ MODELS = {
     "music": "facebook/musicgen-small",
     "ltx25": "Lightricks/LTX-2.5-Diffusers",
 }
-DEVICE = sys.argv[sys.argv.index("--device") + 1] if "--device" in sys.argv else "gpu"
-TORCH_DEVICE = "cpu" if DEVICE == "cpu" else "cuda"
-HALF = torch.float32 if DEVICE == "cpu" else torch.float16  # CPU는 fp16 연산이 느리거나 안 됨
+DEVICE = sys.argv[sys.argv.index("--device") + 1] if "--device" in sys.argv else "gpu"  # 요청에 device가 없을 때
+
+
+def device_of(task: dict) -> tuple[str, str, "torch.dtype"]:
+    """요청의 장치 → (설정값 gpu|hybrid|cpu, torch 장치, 반정밀도 dtype). CPU는 fp16 연산이 느리거나 안 돼서 fp32."""
+    device = task.get("device") or DEVICE
+    if device != "cpu" and not torch.cuda.is_available():
+        device = "cpu"
+    return device, ("cpu" if device == "cpu" else "cuda"), (torch.float32 if device == "cpu" else torch.float16)
 QUANT = sys.argv[sys.argv.index("--quant") + 1] if "--quant" in sys.argv else "nf4"
 MODELS_DIR = sys.argv[sys.argv.index("--models-dir") + 1] if "--models-dir" in sys.argv else "models"
 current_id = ""  # 지금 처리 중인 요청 (모델을 불러오는 동안 진행 상황을 알릴 때 씀)
@@ -55,7 +61,7 @@ class Loaded:
         self.model = None
 
     def get(self, kind: str, request_id: str, task: dict):
-        key = (kind, task.get("model"), task.get("quant"))
+        key = (kind, task.get("model"), task.get("quant"), device_of(task)[0])
         if self.key == key:
             return self.model
         self.model = None
@@ -72,13 +78,14 @@ def load_image(task: dict):
     """SDXL 계열 (SDXL-Turbo, DreamShaper XL Lightning/Turbo). 스케줄러는 모델 카드 권장대로."""
     from diffusers import AutoPipelineForText2Image, DPMSolverMultistepScheduler
 
-    pipe = AutoPipelineForText2Image.from_pretrained(task.get("model") or MODELS["image"], torch_dtype=HALF, variant="fp16")
+    device, torch_device, half = device_of(task)
+    pipe = AutoPipelineForText2Image.from_pretrained(task.get("model") or MODELS["image"], torch_dtype=half, variant="fp16")
     if task.get("scheduler") == "dpm":
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-    if DEVICE == "hybrid":
+    if device == "hybrid":
         pipe.enable_model_cpu_offload()  # 텍스트 인코더·UNet·VAE를 번갈아 GPU에
     else:
-        pipe.to(TORCH_DEVICE)
+        pipe.to(torch_device)
     pipe.set_progress_bar_config(disable=True)
     return pipe
 
@@ -86,11 +93,12 @@ def load_image(task: dict):
 def load_video(task: dict):
     from diffusers import LTXPipeline
 
-    pipe = LTXPipeline.from_pretrained(MODELS["video"], torch_dtype=torch.float32 if DEVICE == "cpu" else torch.bfloat16)
-    if DEVICE == "hybrid" or (DEVICE == "gpu" and torch.cuda.get_device_properties(0).total_memory < 24 * 1024 ** 3):
+    device, torch_device, _ = device_of(task)
+    pipe = LTXPipeline.from_pretrained(MODELS["video"], torch_dtype=torch.float32 if device == "cpu" else torch.bfloat16)
+    if device == "hybrid" or (device == "gpu" and torch.cuda.get_device_properties(0).total_memory < 24 * 1024 ** 3):
         pipe.enable_model_cpu_offload()  # 텍스트 인코더(T5)와 본체를 번갈아 GPU에 올려 16GB 안에서 돌린다
     else:
-        pipe.to(TORCH_DEVICE)
+        pipe.to(torch_device)
     pipe.vae.enable_tiling()
     pipe.set_progress_bar_config(disable=True)
     return pipe
@@ -100,7 +108,8 @@ def load_music(task: dict):
     from transformers import AutoProcessor, MusicgenForConditionalGeneration
 
     processor = AutoProcessor.from_pretrained(MODELS["music"])
-    model = MusicgenForConditionalGeneration.from_pretrained(MODELS["music"], torch_dtype=HALF).to(TORCH_DEVICE)
+    _, torch_device, half = device_of(task)
+    model = MusicgenForConditionalGeneration.from_pretrained(MODELS["music"], torch_dtype=half).to(torch_device)
     return processor, model
 
 
@@ -117,7 +126,7 @@ def load_ltx25(task: dict):
 def load_flux2(task: dict):
     from flux2 import Flux2
 
-    return Flux2(task["model"], task.get("quant", ""), MODELS_DIR, _note)
+    return Flux2(task["model"], task.get("quant", ""), MODELS_DIR, _note, device=device_of(task)[0])
 
 
 LOADERS = {"image": load_image, "video": load_video, "music": load_music, "ltx25": load_ltx25, "flux2": load_flux2}
@@ -129,7 +138,7 @@ def run_image(pipe, task: dict, request_id: str) -> None:
         width=task.get("width", 576), height=task.get("height", 1024),
         num_inference_steps=task.get("steps", 4),
         guidance_scale=task.get("guidance", 0.0),  # SDXL-Turbo는 가이던스 없이, DreamShaper XL은 2
-        generator=torch.Generator(TORCH_DEVICE).manual_seed(int(task.get("seed", 0))),
+        generator=torch.Generator(device_of(task)[1]).manual_seed(int(task.get("seed", 0))),
     ).images[0]
     image.save(task["out"])
 
@@ -148,7 +157,7 @@ def run_video(pipe, task: dict, request_id: str) -> None:
         negative_prompt=task.get("negative") or "worst quality, inconsistent motion, blurry, jittery, distorted",
         width=task.get("width", 512), height=task.get("height", 768),
         num_frames=task.get("frames", 97), num_inference_steps=steps, guidance_scale=3.0,
-        generator=torch.Generator(TORCH_DEVICE).manual_seed(int(task.get("seed", 0))),
+        generator=torch.Generator(device_of(task)[1]).manual_seed(int(task.get("seed", 0))),
         callback_on_step_end=on_step,
     ).frames[0]
     export_to_video(frames, task["out"], fps=task.get("fps", 24))
@@ -160,7 +169,7 @@ def run_music(loaded, task: dict, request_id: str) -> None:
 
     processor, model = loaded
     rate = model.config.audio_encoder.sampling_rate
-    inputs = processor(text=[task["prompt"]], padding=True, return_tensors="pt").to(TORCH_DEVICE)
+    inputs = processor(text=[task["prompt"]], padding=True, return_tensors="pt").to(device_of(task)[1])
     tokens = int(min(30.0, float(task.get("seconds", 20))) * 50)  # 초당 50 토큰, 최대 30초
     audio = model.generate(**inputs, do_sample=True, guidance_scale=3.0, max_new_tokens=tokens)
     wav = audio[0, 0].float().cpu().numpy()
