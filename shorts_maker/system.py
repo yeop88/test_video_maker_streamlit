@@ -250,3 +250,137 @@ def fits(need_gb: float, s: Specs, device: str) -> str:
     if device == "hybrid" and s.ram_gb >= 32:
         return "⚠️ GPU+CPU로 가능 (느림)"
     return "❌ GPU 메모리 부족"
+
+
+# ───────────── 실시간 자원 사용량 (CPU·RAM·GPU) ─────────────
+# 백그라운드 스레드 하나가 1초마다 재서 최근 HISTORY_SEC초를 모아 둔다 (접속한 모든 화면이 같은 기록을 봄).
+# Windows(WDDM)에서는 nvidia-smi가 프로그램별 GPU 메모리를 알려 주지 않아서, GPU는 전체 사용량만 보여 준다.
+HISTORY_SEC = 120
+_history: list[dict] = []
+_processes: list[dict] = []
+_sampler = None
+_proc_cache: dict[int, object] = {}  # pid → psutil.Process (CPU %는 같은 객체로 재야 함)
+_roles: dict[int, str] = {}  # pid → 화면에 보일 이름
+
+
+def _gpu_now() -> list[dict]:
+    if not shutil.which("nvidia-smi"):
+        return []
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    gpus = []
+    for line in out.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        try:
+            gpus.append({"util": float(parts[0]), "vram_used": float(parts[1]) / 1024, "vram_total": float(parts[2]) / 1024,
+                         "temp": float(parts[3]), "power": float(parts[4]) if parts[4] not in ("[N/A]", "") else 0.0})
+        except (ValueError, IndexError):
+            pass
+    return gpus
+
+
+def _role(proc) -> str | None:
+    """우리 앱과 관련된 프로세스면 화면에 보일 이름."""
+    import psutil
+
+    try:
+        name = proc.name().lower()
+        if proc.pid == os.getpid():
+            return "앱 서버 (화면·작업 큐·Whisper·Chatterbox)"
+        if name.startswith("ollama"):
+            return "Ollama (LLM)"
+        if name.startswith("python"):
+            cmd = " ".join(proc.cmdline())
+            if "worker.py" in cmd and "--serve" in cmd:
+                return "AI 생성 프로세스 (LTX-2.5·FLUX.2)" if ".venv-ltx" in cmd else "AI 생성 프로세스 (SDXL·LTX 2B·MusicGen)"
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+    return None
+
+
+def _scan_processes() -> None:
+    """우리 앱 관련 프로세스를 찾는다 (5초마다, 모든 프로세스를 훑으므로 자주 하지 않음)."""
+    import psutil
+
+    found = {}
+    for proc in psutil.process_iter():
+        role = _role(proc)
+        if role:
+            found[proc.pid] = (_proc_cache.get(proc.pid) or proc, role)
+    _proc_cache.clear()
+    _proc_cache.update({pid: p for pid, (p, _) in found.items()})
+    _roles.clear()
+    _roles.update({pid: role for pid, (_, role) in found.items()})
+
+
+def _measure_processes() -> list[dict]:
+    import psutil
+
+    cores = psutil.cpu_count() or 1
+    rows: dict[str, dict] = {}
+    for pid, role in list(_roles.items()):
+        proc = _proc_cache.get(pid)
+        try:
+            cpu = proc.cpu_percent(None) / cores  # 컴퓨터 전체 CPU 대비 %
+            ram = proc.memory_info().rss / 1024 ** 3
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            continue
+        row = rows.setdefault(role, {"프로그램": role, "CPU %": 0.0, "RAM GB": 0.0, "개수": 0})
+        row["CPU %"] += cpu
+        row["RAM GB"] += ram
+        row["개수"] += 1
+    return [{**r, "CPU %": round(r["CPU %"], 1), "RAM GB": round(r["RAM GB"], 2)} for r in rows.values()]
+
+
+def _sample_loop() -> None:
+    import time
+
+    import psutil
+
+    psutil.cpu_percent(None)
+    tick = 0
+    while True:
+        try:
+            if tick % 5 == 0:
+                _scan_processes()
+            vm = psutil.virtual_memory()
+            gpus = _gpu_now()
+            _history.append({
+                "t": time.time(), "cpu": psutil.cpu_percent(None), "ram_used": vm.used / 1024 ** 3, "ram_total": vm.total / 1024 ** 3,
+                "gpu": gpus[0]["util"] if gpus else None, "vram_used": gpus[0]["vram_used"] if gpus else None,
+                "vram_total": gpus[0]["vram_total"] if gpus else None, "temp": gpus[0]["temp"] if gpus else None,
+                "power": gpus[0]["power"] if gpus else None,
+            })
+            del _history[:-HISTORY_SEC]
+            _processes[:] = _measure_processes()
+        except Exception:  # 재는 데 실패해도 앱은 계속
+            pass
+        tick += 1
+        time.sleep(1.0)
+
+
+def ensure_sampler() -> None:
+    """자원 사용량을 재는 백그라운드 스레드를 (한 번만) 띄운다. psutil이 없으면 띄우지 않는다."""
+    global _sampler
+    import threading
+
+    if _sampler is not None and _sampler.is_alive():
+        return
+    try:
+        import psutil  # noqa: F401
+    except ImportError:
+        return
+    _sampler = threading.Thread(target=_sample_loop, name="usage-sampler", daemon=True)
+    _sampler.start()
+
+
+def usage_history() -> list[dict]:
+    return list(_history)
+
+
+def usage_processes() -> list[dict]:
+    return list(_processes)

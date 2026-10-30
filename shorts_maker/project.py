@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ class Project:
     job: Job | None = None
     shorts: list[dict] = field(default_factory=list)  # [{id, title, clips: [...]}]
     results: list[dict] = field(default_factory=list)  # 만든 쇼츠 기록, 최신이 앞
+    mtime: float = 0.0  # 마지막으로 읽거나 쓴 state.json의 수정 시각 (다른 곳에서 바꿨는지 알아보는 데 씀, 저장하지 않음)
 
     @property
     def id(self) -> str:
@@ -93,12 +95,42 @@ def save(project: Project) -> None:
     project.dir.mkdir(parents=True, exist_ok=True)
     path = project.dir / STATE_FILE
     tmp = path.with_name(f".{STATE_FILE}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    with _lock_of(project.dir):
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(path)
+        project.mtime = path.stat().st_mtime
+
+
+_locks: dict[str, threading.RLock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_of(folder: Path) -> threading.RLock:
+    with _locks_guard:
+        return _locks.setdefault(str(Path(folder).resolve()), threading.RLock())
+
+
+def update(folder: Path, change) -> Project:
+    """저장된 최신 상태를 읽어 change(project)로 고치고 저장한다 (작업 큐가 쓰는 동안 화면에서 고친 내용을 덮어쓰지 않게)."""
+    with _lock_of(folder):
+        project = load(folder)
+        change(project)
+        save(project)
+        return project
+
+
+def changed(project: Project) -> bool:
+    """화면에 불러온 뒤 다른 곳(작업 큐, 다른 브라우저)에서 저장했는지."""
+    try:
+        return (project.dir / STATE_FILE).stat().st_mtime != project.mtime
+    except OSError:
+        return True
 
 
 def load(folder: Path) -> Project:
-    data = json.loads((folder / STATE_FILE).read_text(encoding="utf-8"))
+    path = folder / STATE_FILE
+    mtime = path.stat().st_mtime
+    data = json.loads(path.read_text(encoding="utf-8"))
     job = _job_from_dict(data["job"]) if data.get("job") else None
     if job and not job.video.exists():  # 중간 파일이 지워졌으면 분석부터 다시
         job = None
@@ -113,6 +145,7 @@ def load(folder: Path) -> Project:
         job=job,
         shorts=data.get("shorts", []),
         results=[r for r in data.get("results", []) if Path(r.get("video", "")).exists()],
+        mtime=mtime,
     )
 
 

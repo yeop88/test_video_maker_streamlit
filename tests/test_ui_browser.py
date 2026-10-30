@@ -107,6 +107,23 @@ def wait_idle(page, timeout: int = 60000) -> None:
     page.wait_for_function("!document.querySelector('[data-testid=\"stStatusWidget\"]')", timeout=timeout)
 
 
+def wait_queue_idle(page, timeout: int = 900000) -> None:
+    """공용 작업 큐가 다 끝날 때까지 기다린다 (화면 위쪽 「🚦 작업 큐」 제목이 '쉬는 중 · 대기 0')."""
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('summary')].some(s => s.innerText.includes('🚦 작업 큐 · 쉬는 중 · 대기 0'))",
+        timeout=timeout)
+    wait_idle(page)
+    page.wait_for_timeout(1500)
+
+
+def open_queue(page) -> None:
+    """화면 위쪽 「🚦 작업 큐」를 펼친다 (내 작업이 없으면 접혀 있음)."""
+    if not page.get_by_role("button", name="내 완료 비우기").is_visible():
+        page.locator("summary").filter(has_text="🚦 작업 큐").first.click()
+        page.get_by_role("button", name="내 완료 비우기").wait_for(timeout=30000)
+        page.wait_for_timeout(500)
+
+
 def close_settings(page) -> None:
     """팝업의 「완료」로 닫는다 (바뀐 설정이 화면 전체에 반영됨). 다시 그리는 중이라 눌림이 무시되면 한 번 더 누른다."""
     for _ in range(3):
@@ -244,8 +261,10 @@ def test_ai_scene_card(page):
     page.wait_for_timeout(1200)
     t = time.time()
     card.get_by_role("button", name="➕ 큐에 넣기").click()
-    page.get_by_text("AI 장면 생성 큐").first.wait_for(timeout=60000)
-    check("큐에 넣기 → 생성 큐에 항목", page.locator('[class*="st-key-q_"]').count() >= 1)
+    page.locator('[class*="st-key-q_"]').first.wait_for(timeout=60000)
+    page.wait_for_timeout(1500)
+    check("큐에 넣기 → 공용 작업 큐에 항목",
+          any("🎨 AI 장면" in r.inner_text() for r in page.locator('[class*="st-key-q_"]').all()))
     # 큐가 다 만들면 카드에 미리보기 영상이 붙는다 (큐 패널이 2초마다 확인하고 화면을 새로 그림)
     page.locator('[class*="st-key-cardbox_"]').nth(n).locator("video").wait_for(timeout=300000)
     check("🎨 만들기 → 카드에 AI 장면 미리보기", True, f"{time.time() - t:.0f}초")
@@ -291,9 +310,9 @@ def test_full_flow(page, lake: Path, out: Path):
 
     t = time.time()
     page.get_by_role("button", name="✍️ 나레이션만 다시 쓰기").click()
-    page.wait_for_timeout(1000)
-    page.get_by_text("나레이션을 쓰는 중...").wait_for(state="detached", timeout=300000)
     page.wait_for_timeout(1500)
+    check("나레이션 다시 쓰기 → 공용 큐에 들어감", page.get_by_text("✍️ 나레이션 다시 쓰기").count() >= 1)
+    wait_queue_idle(page, 300000)
     check("나레이션만 다시 쓰기", "Error" not in page.inner_text('[data-testid="stMain"]'), f"{time.time() - t:.0f}초")
 
     t = time.time()
@@ -408,8 +427,9 @@ def test_ai_mode(page, out: Path):
     check("AI 모드에는 원본 구간 추가 버튼이 없음", page.get_by_role("button", name="➕ 구간 추가").count() == 0)
 
     # 생성 큐: 모두 넣기 → 대기 항목 순서 바꾸기·빼기 → 남은 장면이 다 만들어짐
-    if page.get_by_role("button", name="완료 비우기").is_enabled():
-        page.get_by_role("button", name="완료 비우기").click()
+    open_queue(page)
+    if page.get_by_role("button", name="내 완료 비우기").is_enabled():
+        page.get_by_role("button", name="내 완료 비우기").click()
     page.get_by_role("button", name="⏸ 일시정지").click()  # 순서를 바꾸는 동안 멈춰 둠
     page.wait_for_timeout(1000)
     page.get_by_role("button", name=re.compile(r"🎬 AI 장면 \d+개 모두 큐에 넣기")).click()
@@ -429,7 +449,7 @@ def test_ai_mode(page, out: Path):
     rows = [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]
     check("큐에서 빼기 (🗑)", len(rows) == cards.count() - 1, f"대기 {len(rows)}")
     t = time.time()
-    page.get_by_role("button", name="▶ 이어서 만들기").click()
+    page.get_by_role("button", name="▶ 이어서").click()
     page.wait_for_function(
         "() => document.querySelectorAll('[class*=\"st-key-cardbox_\"] video').length >= "
         f"{cards.count() - 1}", timeout=900000)
@@ -449,6 +469,60 @@ def test_ai_mode(page, out: Path):
     page.get_by_text("📼 영상으로 만들기").click()
     page.wait_for_timeout(1500)
     check("영상 모드로 돌아가면 업로드 칸", page.locator(ZONE).count() == 1)
+
+
+def test_shared_queue(browser, page):
+    """두 사람(A=page, B=새 브라우저)이 같은 큐를 쓴다: B에게 A의 작업이 「다른 사용자」로 보이고 버튼이 없음,
+    B는 자기 작업만 다룰 수 있음, 일시정지를 풀면 넣은 순서대로 둘 다 만들어짐."""
+    results_before = page.locator('[class*="st-key-result_"]').count()
+    open_queue(page)
+    page.get_by_role("button", name="⏸ 일시정지").click()
+    page.wait_for_timeout(1000)
+    page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+    wait_idle(page)
+    other = browser.new_page(viewport={"width": 1400, "height": 1000})
+    other.goto(URL)
+    other.wait_for_selector(ZONE, timeout=60000)
+    check("사람마다 다른 ID (주소의 u)", "u=" in other.url and other.url != page.url, f"{page.url} / {other.url}")
+    other.get_by_text("📂 최근 작업").click()
+    other.get_by_role("button", name="열기").first.click()
+    other.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").wait_for(timeout=60000)
+    wait_idle(other)
+    other.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+    wait_idle(other)
+    other.wait_for_timeout(2000)
+    rows = other.locator('[class*="st-key-q_"]')
+    texts = [r.inner_text() for r in rows.all()]
+    a_row = next((r for r, t in zip(rows.all(), texts) if "다른 사용자" in t), None)
+    b_row = next((r for r, t in zip(rows.all(), texts) if "내 작업" in t), None)
+    check("B 화면: A의 작업은 「다른 사용자」, 내 작업은 따로", a_row is not None and b_row is not None,
+          [t.replace(chr(10), " | ")[:80] for t in texts])
+    check("B는 A의 작업을 빼거나 옮길 수 없음", a_row is not None and a_row.get_by_role("button").count() == 0)
+    check("B는 A의 작업 앞으로 끼어들 수 없음 (⬆ 비활성)",
+          b_row is not None and b_row.get_by_role("button", name="⬆").is_disabled())
+    check("B 작업 대기 순서 2번째", b_row is not None and "2번째" in b_row.inner_text())
+    page.get_by_role("button", name="▶ 이어서").click()
+    wait_queue_idle(page, 600000)
+    page.wait_for_function(f"document.querySelectorAll('[class*=\"st-key-result_\"]').length >= {results_before + 2}",
+                           timeout=120000)
+    check("A·B 작업이 차례로 끝나 결과 2개 추가", True, f"{results_before} → {results_before + 2}")
+    other.close()
+
+
+def test_resource_monitor(page):
+    """「💻 컴퓨터·AI 모델」 팝업의 실시간 사용량: CPU·RAM·GPU 값, 1초마다 새로 고침, 프로그램별 표. 사이드바 한 줄 요약."""
+    side = page.locator('[data-testid="stSidebar"]').inner_text()
+    check("사이드바 실시간 사용량 요약", "CPU" in side and "RAM" in side and "작업 큐:" in side)
+    dialog = open_settings(page, "💻 컴퓨터·AI 모델")
+    page.wait_for_timeout(2000)
+    text = dialog.inner_text()
+    check("실시간 사용량: CPU·RAM·GPU 값", all(k in text for k in ("CPU 사용", "RAM 사용", "GPU")), text[:200])
+    check("프로그램별 CPU·RAM 표 (앱 서버)", "앱 서버" in text)
+    stamp = lambda: next((ln for ln in dialog.inner_text().splitlines() if ln.startswith("측정 ")), "")  # noqa: E731
+    first = stamp()
+    page.wait_for_timeout(3500)
+    check("사용량이 1초마다 새로 고쳐짐", first and stamp() != first, f"{first[:12]} → {stamp()[:12]}")
+    close_settings(page)
 
 
 def test_restore(page):
@@ -567,6 +641,8 @@ def main():
                 test_voice_library(page)
                 test_full_flow(page, lake, work)
                 test_restore(page)
+                test_shared_queue(browser, page)
+                test_resource_monitor(page)
                 test_series_ui(page, combo)
                 test_ai_mode(page, work)
                 test_device_split(page)

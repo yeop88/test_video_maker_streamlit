@@ -1,5 +1,7 @@
 """AI 쇼츠 나레이션 스튜디오 — 영상을 이해해 하이라이트를 고르고, AI 나레이션과 한글 자막을 입혀 쇼츠로 만든다."""
 import hashlib
+import time
+import uuid
 from pathlib import Path
 
 # pyarrow는 맨 먼저 불러온다. Whisper·Chatterbox(torch/CUDA) 등을 올린 뒤 처음으로 pyarrow DLL을 불러오면
@@ -9,7 +11,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, generate, genqueue, llm, media, music, pipeline, presets, project, system, tts, voices
+from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, project, system, tasks, tts,
+                          voices)
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -25,18 +28,6 @@ VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
 UI_DIR = Path(__file__).parent / "ui"
 
 
-@st.cache_resource(show_spinner="Whisper 모델을 불러오는 중... (처음 한 번은 다운로드로 몇 분 걸립니다)")
-def get_whisper(device: str):
-    from shorts_maker import asr
-
-    return asr.load_whisper(device)
-
-
-@st.cache_resource(show_spinner="Chatterbox 모델을 불러오는 중... (처음 한 번은 다운로드로 몇 분 걸립니다)")
-def get_chatterbox(device: str):
-    return tts.load_chatterbox(device)
-
-
 @st.cache_data(ttl=60, show_spinner=False)
 def get_specs() -> system.Specs:
     return system.specs()
@@ -48,6 +39,13 @@ def get_ollama_models() -> list[str]:
 
 
 media.ensure_ffmpeg()
+jobqueue.ensure_runner()  # 모든 접속자가 같은 작업 큐를 쓴다 (한 번에 한 작업)
+system.ensure_sampler()  # CPU·RAM·GPU 사용량을 1초마다 잰다
+
+# 브라우저(탭)마다 다른 ID: 큐에 넣은 작업이 누구 것인지 구분한다. 주소에 넣어 두어 새로고침해도 유지된다.
+if not st.query_params.get("u"):
+    st.query_params["u"] = uuid.uuid4().hex[:8]
+ME = st.query_params["u"]
 
 try:
     models = get_ollama_models()
@@ -90,8 +88,7 @@ generate.set_image_model(ss.image_model)
 def change_device() -> None:
     """계산 장치를 바꾸면 저장하고, 다른 장치에 올려 둔 Whisper·Chatterbox를 내린다."""
     system.save_machine(device=ss.device, split={t: ss[f"dev_{t}"] for t in system.TASKS})
-    get_whisper.clear()
-    get_chatterbox.clear()
+    tasks.unload_models()
     apply_devices()
     ss.preset_msg = ("info", f"계산 장치: {system.DEVICES[ss.device]}. 모델은 다음에 쓸 때 이 장치로 다시 불러옵니다. "
                              "추천 모델도 장치에 맞게 바뀌었습니다 (「✨ 추천 모델로 맞추기」로 한 번에 바꿀 수 있음).")
@@ -196,7 +193,80 @@ def add_music_upload() -> None:
         ss.preset_msg = ("error", str(e))
 
 
-PREVIEW_TEXT = "안녕하세요. 이 목소리로 쇼츠 나레이션을 읽어 드릴게요."
+# ───────────────────────── 공용 작업 큐에 넣기 ─────────────────────────
+def task_settings() -> dict:
+    """작업을 넣을 때의 설정 (작업은 나중에 돌아도 넣은 때의 설정으로 만든다)."""
+    return {**current_settings(), "llm_model": ss.llm_model if models else None,
+            "devices": {t: dev(t) for t in system.TASKS}}
+
+
+def clock(t) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(t)) if isinstance(t, (int, float)) else str(t)
+
+
+def minutes(sec: float) -> str:
+    return f"약 {sec / 60:.0f}분" if sec >= 90 else f"약 {max(5, round(sec / 5) * 5):.0f}초"
+
+
+def enqueue(kind: str, label: str, params: dict, p: project.Project | None = None, key: str = "",
+            card_uid: str = "", notify: bool = True) -> str:
+    """작업을 공용 큐에 넣고 항목 ID를 돌려준다. 같은 작업이 이미 대기·진행 중이면 그것을 돌려준다."""
+    item_id, added = jobqueue.add(kind, label, {**params, "settings": task_settings()}, owner=ME,
+                                  project=p.name if p else "", project_dir=str(p.dir) if p else "", key=key,
+                                  card_uid=card_uid)
+    if notify:
+        queue = jobqueue.items()
+        pos = jobqueue.position(queue, item_id)
+        wait = jobqueue.waits(queue).get(item_id, 0)
+        where = f"대기 {pos}번째, {minutes(wait)} 뒤 시작 예상" if pos > 1 or wait > 5 else "바로 시작합니다"
+        ss.flash = f"{'큐에 넣었습니다' if added else '이미 큐에 있습니다'}: {jobqueue.KIND_LABELS[kind]} ({where})"
+    return item_id
+
+
+def task_line(q: dict, queue: list[dict]) -> str:
+    """큐 항목 한 줄 상태: 진행 중이면 진행 내용, 대기면 순서와 예상 시작."""
+    if q["status"] == jobqueue.RUNNING:
+        prog = jobqueue.progress(q["id"])
+        spent = time.time() - q.get("started", time.time())
+        return f"🔄 {prog.get('note', '진행 중')} · {spent:.0f}초 지남"
+    if q["status"] == jobqueue.WAITING:
+        return f"⏳ 대기 {jobqueue.position(queue, q['id'])}번째 · {minutes(jobqueue.waits(queue).get(q['id'], 0))} 뒤 시작 예상"
+    return jobqueue.STATUS_LABELS[q["status"]]
+
+
+def task_progress(q: dict) -> None:
+    """진행 중인 항목의 단계 목록과 진행 막대."""
+    prog = jobqueue.progress(q["id"])
+    for line in prog.get("lines", [])[-6:]:
+        st.caption(line)
+    if prog.get("total"):
+        st.progress(min(prog["step"] / prog["total"], 1.0), text=prog.get("note", ""))
+
+
+def watch_in_dialog(state_key: str, dialog: str, on_done) -> None:
+    """팝업 안에서 큐에 넣은 작업(목소리 미리 듣기, AI 음악)을 지켜본다. 끝나면 on_done(결과)을 부르고 같은 팝업을 다시 연다."""
+    item_id = ss.get(state_key)
+    if not item_id:
+        return
+
+    @st.fragment(run_every=1)
+    def watch() -> None:
+        queue = jobqueue.items()
+        q = next((x for x in queue if x["id"] == item_id), None)
+        if q is None or q["status"] in (jobqueue.CANCELED, jobqueue.FAILED):
+            ss.pop(state_key, None)
+            if q is not None:
+                st.error(f"{jobqueue.KIND_LABELS[q['kind']]} 실패: {q['error'].splitlines()[0] if q['error'] else '취소됨'}")
+            return
+        if q["status"] == jobqueue.DONE:
+            ss.pop(state_key, None)
+            on_done(q["result"] or {})
+            ss.reopen_dialog = dialog
+            st.rerun()
+        st.info(f"{jobqueue.KIND_LABELS[q['kind']]} · {task_line(q, queue)}")
+    watch()
+
+
 
 
 def add_voice(kind: str) -> None:
@@ -297,16 +367,63 @@ def device_summary() -> str:
     return system.DEVICES[ss.device].split(" (")[0]
 
 
+def usage_now() -> dict | None:
+    history = system.usage_history()
+    return history[-1] if history else None
+
+
+def usage_summary() -> str:
+    u = usage_now()
+    if u is None:
+        return "사용량을 재는 중..."
+    text = f"CPU {u['cpu']:.0f}% · RAM {u['ram_used']:.0f}/{u['ram_total']:.0f}GB"
+    if u["gpu"] is not None:
+        text += f" · GPU {u['gpu']:.0f}% · VRAM {u['vram_used']:.1f}/{u['vram_total']:.0f}GB"
+    return text
+
+
+def resource_monitor() -> None:
+    """실시간 자원 사용량: 지금 값, 최근 2분 그래프, 프로그램별 CPU·RAM (1초마다 새로 고침)."""
+    u = usage_now()
+    if u is None:
+        st.caption("사용량을 재는 중... (psutil이 없으면 표시되지 않습니다)")
+        return
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("CPU 사용", f"{u['cpu']:.0f}%", help=f"{specs.cpu} · 코어 {specs.cores}개")
+    c2.metric("RAM 사용", f"{u['ram_used']:.1f} GB", f"전체 {u['ram_total']:.0f} GB 중 {u['ram_used'] / u['ram_total']:.0%}",
+              delta_color="off")
+    if u["gpu"] is not None:
+        c3.metric("GPU 사용", f"{u['gpu']:.0f}%", f"{u['temp']:.0f}°C · {u['power']:.0f}W", delta_color="off")
+        c4.metric("GPU 메모리 (VRAM)", f"{u['vram_used']:.1f} GB",
+                  f"전체 {u['vram_total']:.0f} GB 중 {u['vram_used'] / u['vram_total']:.0%}", delta_color="off")
+    else:
+        c3.metric("GPU", "없음")
+    history = system.usage_history()
+    now = history[-1]["t"]
+    chart = {"초 전": [round(h["t"] - now) for h in history], "CPU %": [h["cpu"] for h in history],
+             "RAM %": [100 * h["ram_used"] / h["ram_total"] for h in history]}
+    if u["gpu"] is not None:
+        chart["GPU %"] = [h["gpu"] for h in history]
+        chart["VRAM %"] = [100 * h["vram_used"] / h["vram_total"] for h in history]
+    st.line_chart(chart, x="초 전", y=[k for k in chart if k != "초 전"], height=180, y_label="%", x_label="초 전 (최근 2분)")
+    rows = system.usage_processes()
+    if rows:
+        st.table(rows, hide_index=True)
+    running = next((q for q in jobqueue.items() if q["status"] == jobqueue.RUNNING), None)
+    st.caption(f"측정 {clock(u['t'])} · "
+               + ("지금 큐에서 도는 작업: " + f"{jobqueue.KIND_LABELS[running['kind']]} · {running['label']}" if running
+                  else "지금 큐에서 도는 작업 없음")
+               + " · 프로그램별 GPU 메모리는 Windows에서 알 수 없어 GPU는 전체 사용량만 보여 줍니다.")
+
+
 def computer_settings() -> None:
-    """💻 컴퓨터·AI 모델: 사양, 계산 장치(작업별), 추천 모델, AI 이미지·동영상 모델."""
+    """💻 컴퓨터·AI 모델: 사양, 실시간 사용량, 계산 장치(작업별), 추천 모델, AI 이미지·동영상 모델."""
     show_message()
     gpu_text = ", ".join(f"{g.name} {g.vram_gb:.0f}GB" for g in specs.gpus) or "NVIDIA GPU 없음"
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("GPU (VRAM)", f"{specs.vram_gb:.0f} GB" if specs.gpus else "없음", help=gpu_text)
-    c2.metric("RAM", f"{specs.ram_gb:.0f} GB", f"남은 {specs.ram_free_gb:.0f} GB", delta_color="off")
-    c3.metric("CPU 코어", f"{specs.cores}개", help=specs.cpu)
-    c4.metric("작업 폴더 디스크 여유", f"{specs.disk_free_gb:,} GB")
-    st.caption(f"{specs.os} · CPU {specs.cpu} · GPU {gpu_text}" + (f" (드라이버 {specs.gpus[0].driver})" if specs.gpus else ""))
+    st.caption(f"{specs.os} · CPU {specs.cpu} ({specs.cores}코어) · RAM {specs.ram_gb:.0f}GB · GPU {gpu_text}"
+               + (f" (드라이버 {specs.gpus[0].driver})" if specs.gpus else "") + f" · 작업 폴더 디스크 여유 {specs.disk_free_gb:,}GB")
+    st.markdown("**📈 실시간 사용량** (1초마다)")
+    st.fragment(resource_monitor, run_every=1)()
 
     tab_device, tab_models = st.tabs(["계산 장치와 추천 모델", "AI 이미지·동영상 모델"])
     with tab_device:
@@ -405,10 +522,11 @@ def voice_settings() -> None:
         col_del_voice.button("🗑", key="del_voice", disabled=not ss.voice_id, help="이 목소리를 보관함에서 지우기",
                              on_click=delete_voice)
         setting_slider("감정 표현 강도", "exaggeration")
-        if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (몇 초)."):
-            with st.spinner("목소리를 만드는 중..."):
-                engine = tts.ChatterboxEngine(get_chatterbox(dev("tts")), voices.sample_path(ss.voice_id), ss.exaggeration)
-                ss.voice_preview = str(engine.synthesize_cached(PREVIEW_TEXT, config.WORK_DIR / "voices" / "preview"))
+        if st.button("▶ 미리 듣기", width="stretch", disabled=bool(ss.get("voice_task")),
+                     help="고른 목소리로 예시 문장을 읽어 봅니다. 공용 작업 큐에 들어가 차례가 되면 만듭니다 (몇 초)."):
+            ss.voice_task = enqueue("voice", f"목소리 미리 듣기 · {ss.voice_id or '기본 목소리'}",
+                                    {"voice_id": ss.voice_id, "exaggeration": ss.exaggeration}, notify=False)
+        watch_in_dialog("voice_task", "🎙️ 나레이션 목소리", lambda r: ss.__setitem__("voice_preview", r.get("path", "")))
         if ss.get("voice_preview") and Path(ss.voice_preview).exists():
             st.audio(ss.voice_preview)
         with st.expander("➕ 새 목소리 만들기"):
@@ -461,18 +579,16 @@ def sound_settings() -> None:
         gen_ok, gen_msg = generate.available()
         st.text_input("어떤 음악?", key="ai_music_desc", placeholder="예: 잔잔한 피아노, 평화로운 아침")
         st.slider("길이 (초)", 10, 30, 20, 5, key="ai_music_sec", help="쇼츠가 더 길면 겹쳐 이어 반복합니다.")
-        if st.button("음악 만들기", disabled=not gen_ok, help=gen_msg or "MusicGen으로 배경음악을 만듭니다.",
-                     width="stretch"):
+        if st.button("음악 만들기", disabled=not gen_ok or bool(ss.get("music_task")), width="stretch",
+                     help=gen_msg or "MusicGen으로 배경음악을 만듭니다. 공용 작업 큐에 들어가 차례가 되면 만듭니다."):
             desc = ss.get("ai_music_desc", "").strip() or "calm ambient background music"
-            with st.spinner("음악을 만드는 중..."):
-                try:
-                    prompt = llm.english_prompt(ss.llm_model, desc, "music") if models else desc
-                    wav = generate.music(prompt, float(ss.get("ai_music_sec", 20)))
-                    ss.pending_bgm = music.add_generated(wav, desc[:20], prompt)
-                    ss.preset_msg = ("success", f"AI 음악을 만들어 보관함에 넣었습니다: {prompt}")
-                except RuntimeError as e:
-                    ss.preset_msg = ("error", str(e)[:300])
-            st.rerun(scope="fragment")  # 팝업은 그대로 두고 새 곡을 골라 다시 그림
+            ss.music_task = enqueue("music", f"AI 배경음악 · {desc[:30]}",
+                                    {"desc": desc, "seconds": float(ss.get("ai_music_sec", 20))}, notify=False)
+
+        def music_done(result: dict) -> None:
+            ss.pending_bgm = result["track"]  # 다시 연 팝업이 위젯을 그리기 전에 고른다
+            ss.preset_msg = ("success", f"AI 음악을 만들어 보관함에 넣었습니다: {result.get('prompt', '')}")
+        watch_in_dialog("music_task", "🔊 소리·배경음악", music_done)
     with st.expander("음악 올리기"):
         st.file_uploader("음악 파일", type=music.MUSIC_TYPES, key="bgm_upload", label_visibility="collapsed")
         st.button("보관함에 넣기", on_click=add_music_upload, disabled=ss.get("bgm_upload") is None, width="stretch",
@@ -556,6 +672,17 @@ with st.sidebar:
     if open_dialog:
         DIALOGS[open_dialog]()
 
+    st.subheader("📈 이 컴퓨터 지금")
+
+    @st.fragment(run_every=2)
+    def sidebar_usage() -> None:
+        st.caption(usage_summary())
+        queue = jobqueue.items()
+        running = sum(q["status"] == jobqueue.RUNNING for q in queue)
+        waiting = sum(q["status"] == jobqueue.WAITING for q in queue)
+        st.caption(f"작업 큐: 진행 {running} · 대기 {waiting}" + (" · ⏸ 일시정지" if jobqueue.is_paused() else ""))
+    sidebar_usage()
+
     st.divider()
     st.caption("⚠️ 본인이 권리를 가진 영상이나 허락받은 영상만 사용하세요. 목소리 샘플은 본인 또는 동의받은 사람의 목소리만 사용하세요.")
     st.caption(f"v{shorts_maker.__version__}")
@@ -574,8 +701,99 @@ st.caption(
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
     "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
+
+# ───────────────────────── 공용 작업 큐 (모든 접속자가 같은 큐) ─────────────────────────
+def queue_rows(queue: list[dict]) -> None:
+    """큐 목록. 내 작업만 빼기·순서 바꾸기·취소·다시 시도를 할 수 있다 (다른 사람 작업은 보기만)."""
+    waiting = [q for q in queue if q["status"] == jobqueue.WAITING]
+    running = [q for q in queue if q["status"] == jobqueue.RUNNING]
+    finished = [q for q in queue if q["status"] in (jobqueue.DONE, jobqueue.FAILED, jobqueue.CANCELED)
+                and q.get("owner") == ME][::-1][:8]
+    col_info, col_pause, col_clear_done, col_clear_wait = st.columns([3, 1, 1, 1])
+    paused = jobqueue.is_paused()
+    mine = sum(q.get("owner") == ME for q in waiting + running)
+    col_info.caption(f"진행 {len(running)} · 대기 {len(waiting)} (내 작업 {mine}) · 넣은 순서대로 한 번에 하나씩 처리합니다."
+                     + (" · ⏸ **일시정지됨**" if paused else ""))
+    col_pause.button("▶ 이어서" if paused else "⏸ 일시정지", key="q_pause", width="stretch",
+                     on_click=jobqueue.set_paused, args=(not paused,),
+                     help="모든 사람의 큐를 멈춥니다. 지금 하는 작업까지만 끝내고 멈춥니다.")
+    col_clear_done.button("내 완료 비우기", key="q_clear_done", width="stretch", disabled=not finished,
+                          on_click=jobqueue.clear, args=((jobqueue.DONE, jobqueue.FAILED, jobqueue.CANCELED), ME))
+    col_clear_wait.button("내 대기 전부 빼기", key="q_clear_wait", width="stretch",
+                          disabled=not any(q.get("owner") == ME for q in waiting),
+                          on_click=jobqueue.clear, args=((jobqueue.WAITING,), ME))
+    if not (waiting or running or finished):
+        st.caption("큐가 비어 있습니다.")
+        return
+    for q in running + waiting + finished:
+        own = q.get("owner") == ME
+        with st.container(border=True, key=f"q_{q['id']}"):
+            col_state, col_text, col_btns = st.columns([1.3, 4, 1.6])
+            if q["status"] == jobqueue.WAITING:
+                col_state.markdown(f"⏳ **{waiting.index(q) + 1}번째**")
+            else:
+                col_state.markdown(jobqueue.STATUS_LABELS[q["status"]])
+            col_state.caption("👤 내 작업" if own else "다른 사용자")
+            label = q["label"].replace("*", "").strip()  # 설명에 ** 가 있으면 굵게 표시가 깨짐
+            col_text.markdown(f"**{jobqueue.KIND_LABELS.get(q['kind'], q['kind'])}** · {label}")
+            spent = (f" · {q['finished'] - q['started']:.0f}초 걸림" if q.get("finished") and q.get("started") else "")
+            col_text.caption(f"{q['project'] or '-'} · 넣은 시각 {clock(q['created'])}{spent}")
+            if q["status"] in (jobqueue.RUNNING, jobqueue.WAITING):
+                col_text.caption(task_line(q, queue))
+            if q["status"] == jobqueue.RUNNING:
+                with col_text:
+                    task_progress(q)
+            if q.get("error") and own:
+                with col_text.expander("실패 이유"):
+                    st.code(q["error"][-1200:])
+            if not own:
+                continue
+            b1, b2, b3 = col_btns.columns(3)
+            if q["status"] == jobqueue.WAITING:
+                pos = waiting.index(q)
+                prev_mine = pos > 0 and waiting[pos - 1].get("owner") == ME
+                next_mine = pos + 1 < len(waiting) and waiting[pos + 1].get("owner") == ME
+                b1.button("⬆", key=f"qup_{q['id']}", help="앞으로 (내 작업끼리만)", disabled=not prev_mine,
+                          on_click=jobqueue.move, args=(q["id"], -1))
+                b2.button("⬇", key=f"qdown_{q['id']}", help="뒤로 (내 작업끼리만)", disabled=not next_mine,
+                          on_click=jobqueue.move, args=(q["id"], 1))
+                b3.button("🗑", key=f"qdel_{q['id']}", help="큐에서 빼기", on_click=jobqueue.remove, args=(q["id"],))
+            elif q["status"] == jobqueue.RUNNING:
+                b3.button("⏹", key=f"qstop_{q['id']}", help="지금 하는 작업 취소", on_click=jobqueue.remove, args=(q["id"],))
+            else:
+                if q["status"] in (jobqueue.FAILED, jobqueue.CANCELED):
+                    b1.button("🔁", key=f"qretry_{q['id']}", help="다시 시도 (큐 맨 뒤로)", on_click=jobqueue.retry,
+                              args=(q["id"],))
+                b3.button("🗑", key=f"qdel_{q['id']}", help="목록에서 지우기", on_click=jobqueue.remove, args=(q["id"],))
+
+
+def queue_panel() -> None:
+    """화면 위쪽의 공용 큐. 내 작업이나 지금 연 작업의 큐 항목이 끝나면 화면 전체를 새로 그린다."""
+    queue = jobqueue.items()
+    open_dir = str(Path(ss.project.dir).resolve()) if ss.get("project") is not None else ""
+    # 목소리 미리 듣기·AI 음악은 팝업이 직접 지켜보므로 빼다 (화면 전체를 새로 그리면 열린 팝업이 닫힘)
+    watched = {q["id"] for q in queue if q["status"] in (jobqueue.DONE, jobqueue.FAILED, jobqueue.CANCELED)
+               and q["kind"] not in ("voice", "music")
+               and (q.get("owner") == ME or (q.get("project_dir") and str(Path(q["project_dir"]).resolve()) == open_dir))}
+    if ss.get("queue_finished") is not None and watched - ss.queue_finished:
+        ss.queue_finished = watched
+        st.rerun(scope="app")  # 결과·카드·미리보기를 새로 그림
+    ss.queue_finished = watched
+    running = next((q for q in queue if q["status"] == jobqueue.RUNNING), None)
+    waiting = [q for q in queue if q["status"] == jobqueue.WAITING]
+    mine_active = [q for q in queue if q["status"] in (jobqueue.WAITING, jobqueue.RUNNING) and q.get("owner") == ME]
+    head = (f"🚦 작업 큐 · 🔄 {jobqueue.KIND_LABELS[running['kind']]} ({running['project'] or running['label']})"
+            if running else "🚦 작업 큐 · 쉬는 중") + f" · 대기 {len(waiting)}" + (f" · 내 작업 {len(mine_active)}" if mine_active else "")
+    with st.expander(head, expanded=bool(mine_active)):
+        queue_rows(queue)
+
+
 MODE_LABELS = {"upload": "📼 영상으로 만들기", "ai": "✨ 영상 없이 AI로 만들기"}
 ss.setdefault("mode", "upload")
+
+# 큐가 돌 때는 2초마다, 쉴 때도 5초마다 확인한다 (다른 사람이 넣은 작업도 보이게)
+queue_active = any(q["status"] in (jobqueue.WAITING, jobqueue.RUNNING) for q in jobqueue.items())
+st.fragment(queue_panel, run_every=2 if queue_active else 5)()
 
 
 def refresh_cards() -> None:
@@ -598,7 +816,8 @@ def set_project(p: project.Project, message: str = "") -> None:
 
 def open_recent(folder: Path) -> None:
     try:
-        set_project(project.load(folder), f"'{folder.name}' 작업을 불러왔습니다.")
+        opened = project.load(folder)
+        set_project(opened, f"'{opened.name}' 작업을 불러왔습니다.")
     except (OSError, ValueError, KeyError) as e:
         ss.flash = f"작업을 불러오지 못했습니다: {e}"
     ss.upload_id = None
@@ -678,6 +897,13 @@ if flash:
     st.toast(flash)
 
 proj: project.Project | None = ss.get("project")
+if proj is not None and project.changed(proj):  # 작업 큐나 다른 브라우저가 저장했으면 최신 상태로
+    try:
+        proj = ss.project = project.load(proj.dir)
+        refresh_cards()
+    except (OSError, ValueError, KeyError):  # 다른 사람이 지운 작업
+        proj = None
+        ss.pop("project", None)
 if proj is not None and proj.kind != ss.mode:
     proj = None
 if proj is None and ss.mode == "upload":
@@ -714,18 +940,9 @@ if proj is None:  # 영상 없이 AI로: 주제 → 대본·장면 구성
                "AI가 쓴 대본은 사실과 다를 수 있으니 2단계에서 꼭 확인하세요.")
     if st.button("1단계 · AI 대본 + 장면 구성", type="primary",
                  disabled=llm_model is None or not ss.get("ai_topic", "").strip()):
-        with st.status(f"{llm_model}(으)로 대본과 장면 구성을 쓰는 중...", expanded=True) as status:
-            try:
-                new_project = project.new_ai(ss.ai_topic)
-                title, cards = pipeline.plan_ai(llm_model, ss.ai_topic, target_sec, llm.STYLES[style_label], ss.ai_engine)
-                new_project.shorts = [{"id": project.new_id(), "title": title, "range": None, "focus": "", "clips": cards}]
-                project.save(new_project)
-                set_project(new_project)
-                status.update(label="1단계 완료", state="complete", expanded=False)
-            except Exception as e:
-                status.update(label="1단계 실패", state="error")
-                st.exception(e)
-                st.stop()
+        new_project = project.new_ai(ss.ai_topic)
+        enqueue("plan", f"AI 대본 · {new_project.name}", {"engine": ss.ai_engine}, new_project, key=f"plan:{new_project.dir.name}")
+        set_project(new_project, ss.pop("flash", ""))
         st.rerun()
     st.stop()
 
@@ -755,7 +972,48 @@ else:
         if end - start > config.MAX_SOURCE_SECONDS:
             st.warning(f"{config.MAX_SOURCE_SECONDS // 60}분이 넘으면 분석이 오래 걸리고 장면 설명이 듬성듬성해집니다.")
         label = "1단계 · 다시 분석 + 쇼츠 구성" if proj.job else "1단계 · 영상 분석 + 쇼츠 구성"
-        run_analyze = st.button(label, type="primary", disabled=llm_model is None)
+        busy = bool(jobqueue.for_project(str(proj.dir)))
+        run_analyze = st.button(label, type="primary", disabled=llm_model is None or busy,
+                                help="공용 작업 큐에 넣습니다. 앞에 작업이 있으면 차례를 기다립니다." if not busy else
+                                "이 작업의 큐 항목이 끝난 뒤에 누를 수 있습니다.")
+        if dev("llm") == "cpu" and specs.gpus:
+            st.caption("⚠️ 장면 이해(LLM)가 CPU로 설정되어 있어 분석이 몇 배 느립니다 (33초 영상에 약 8분). "
+                       "「💻 컴퓨터·AI 모델」에서 LLM을 GPU로 두면 빨라집니다.")
+
+
+def project_tasks_box(p: project.Project) -> None:
+    """이 작업의 큐 항목(대기 순서·진행 상황). 끝나면 큐 패널이 화면 전체를 새로 그린다."""
+    queue = jobqueue.items()
+    mine = [q for q in jobqueue.for_project(str(p.dir))]
+    for q in mine:
+        with st.container(border=True):
+            st.markdown(f"**{jobqueue.KIND_LABELS[q['kind']]}** · {task_line(q, queue)}")
+            if q["status"] == jobqueue.RUNNING:
+                task_progress(q)
+            elif q.get("owner") == ME:
+                st.button("큐에서 빼기", key=f"ptask_del_{q['id']}", on_click=jobqueue.remove, args=(q["id"],))
+
+
+def project_failures(p: project.Project) -> None:
+    """이 작업에서 최근 10분 안에 실패한 내 큐 항목."""
+    here = Path(p.dir).resolve()
+    failed = [q for q in jobqueue.items() if q.get("owner") == ME and q["status"] == jobqueue.FAILED
+              and q.get("project_dir") and Path(q["project_dir"]).resolve() == here
+              and time.time() - q.get("finished", 0) < 600]
+    if failed:
+        q = failed[-1]
+        st.error(f"{jobqueue.KIND_LABELS[q['kind']]} 실패: {q['error'].splitlines()[0] if q['error'] else ''} "
+                 "(위 「🚦 작업 큐」에서 이유를 보고 🔁 다시 시도할 수 있습니다)")
+
+
+def project_busy(p: project.Project, kinds: tuple[str, ...]) -> bool:
+    """이 작업에 구성을 바꾸는 큐 항목이 대기·진행 중인지 (그동안 카드를 고치면 덮어써짐)."""
+    return any(q["kind"] in kinds for q in jobqueue.for_project(str(p.dir)))
+
+
+if jobqueue.for_project(str(proj.dir)):
+    st.fragment(project_tasks_box, run_every=1)(proj)
+project_failures(proj)
 
 
 def card_key(uid: str, field: str) -> str:
@@ -804,54 +1062,61 @@ def add_ai_card(p: project.Project, short: dict) -> None:
     refresh_cards()
 
 
-def ensure_prompt(clip: dict) -> None:
-    """장면 설명(한글 가능)을 생성 모델용 영어 프롬프트로 (설명이 바뀌었을 때만 다시 번역)."""
-    text = clip.get("prompt_ko", "").strip()
-    if text and clip.get("prompt_src") != text:
-        clip["prompt"] = llm.english_prompt(llm_model, text) if llm_model else text
-        clip["prompt_src"] = text
-
-
 def card_scene(clip: dict) -> dict:
     """AI 장면 카드 → 생성 요청 {prompt(영어), engine, seed, seconds}."""
     return {"prompt": clip.get("prompt", ""), "engine": clip.get("engine", "image"),
             "seed": int(clip.get("seed", 0)), "seconds": float(clip.get("seconds", 5.0))}
 
 
+def scene_key(clip: dict) -> str:
+    text = clip.get("prompt_ko", "").strip()
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    return f"scene:{clip['uid']}:{clip.get('engine', 'image')}:{int(clip.get('seed', 0))}:{float(clip.get('seconds', 5.0))}:{digest}"
+
+
+def scene_made(clip: dict) -> bool:
+    """지금 설명·방식·시드로 이미 만든 장면인지 (영어 프롬프트가 지금 설명을 번역한 것일 때만 확인)."""
+    return (clip.get("prompt_src") == clip.get("prompt_ko", "").strip() and bool(clip.get("prompt"))
+            and generate.cached_clip(card_scene(clip)) is not None)
+
+
 def enqueue_cards(p: project.Project, short: dict, uids: set[str], new_seed: bool = False) -> int:
-    """AI 장면 카드들을 생성 큐에 넣는다 (설명은 영어 프롬프트로 번역). 넣은 개수를 돌려준다."""
+    """AI 장면 카드들을 공용 작업 큐에 넣는다 (영어 프롬프트 번역은 큐에서). 넣은 개수를 돌려준다."""
     sync_cards(short)
-    scenes = []
+    added = 0
     for clip in short["clips"]:
         if clip.get("kind") != "ai" or clip["uid"] not in uids or not clip.get("prompt_ko", "").strip():
             continue
         if new_seed:
             clip["seed"] = int(clip.get("seed", 0)) + 1
             clip.pop("preview", None)
-        ensure_prompt(clip)
-        scenes.append({**card_scene(clip), "label": clip["prompt_ko"].replace("*", "").strip()[:40], "card_uid": clip["uid"],
-                       "project": f"{p.name} · {short['title'][:20]}"})
+        if scene_made(clip):
+            continue
+        params = {k: clip.get(k, "") for k in ("prompt_ko", "prompt", "prompt_src")}
+        params.update(engine=clip.get("engine", "image"), seed=int(clip.get("seed", 0)),
+                      seconds=float(clip.get("seconds", 5.0)), short_id=short["id"])
+        if any(jobqueue.same_task(q, "scene", scene_key(clip)) for q in jobqueue.items()):
+            continue
+        enqueue("scene", clip["prompt_ko"].replace("*", "").strip()[:40], params, p, key=scene_key(clip),
+                card_uid=clip["uid"], notify=False)
+        added += 1
     project.save(p)
     refresh_cards()
-    return genqueue.add(scenes)
+    return added
 
 
 def card_queue_item(clip: dict) -> dict | None:
-    """이 카드의 지금 설정(설명·방식·시드)으로 넣은 큐 항목 (다른 설정으로 넣었던 것은 무시)."""
-    item = genqueue.status_of_card(clip["uid"])
-    if item and clip.get("prompt") and generate.scene_clip_path(genqueue.scene_of(item)) == generate.scene_clip_path(card_scene(clip)):
-        return item
-    return None
+    """이 카드의 지금 설정(설명·방식·시드·길이)으로 넣은 큐 항목 (다른 설정으로 넣었던 것은 무시)."""
+    item = jobqueue.status_of_card(clip["uid"])
+    return item if item and item.get("key") == scene_key(clip) else None
 
 
 def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
     """AI 장면 카드: 미리보기·큐에 넣기, 방식·길이, 장면 설명, 나레이션."""
     uid = clip["uid"]
-    if clip.get("prompt") and not (clip.get("preview") and Path(clip["preview"]).exists()):
-        made = generate.cached_clip(card_scene(clip))  # 큐에서 다 만들었으면 미리보기로
-        if made:
-            clip["preview"] = str(made)
-            project.save(p)
+    if scene_made(clip) and not (clip.get("preview") and Path(clip["preview"]).exists()):
+        clip["preview"] = str(generate.cached_clip(card_scene(clip)))  # 큐에서 다 만들었으면 미리보기로
+        project.save(p)
     with st.container(border=True, key=f"cardbox_{uid}"):
         col_media, col_opts, col_text = st.columns([1.3, 1, 3])
         with col_media:
@@ -859,11 +1124,11 @@ def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
             item = card_queue_item(clip)
             if clip.get("preview") and preview.exists():
                 st.video(str(preview))
-            elif item and item["status"] in (genqueue.WAITING, genqueue.RUNNING):
+            elif item and item["status"] in (jobqueue.WAITING, jobqueue.RUNNING):
                 where = f" ({item['position']}번째)" if item["position"] else ""
-                st.info(f"{genqueue.STATUS_LABELS[item['status']]}{where} · 아래 「AI 장면 생성 큐」")
-            elif item and item["status"] == genqueue.FAILED:
-                st.error("❌ 만들기 실패 · 아래 큐에서 이유를 볼 수 있습니다")
+                st.info(f"{jobqueue.STATUS_LABELS[item['status']]}{where} · 위 「🚦 작업 큐」")
+            elif item and item["status"] == jobqueue.FAILED:
+                st.error("❌ 만들기 실패 · 위 「🚦 작업 큐」에서 이유를 볼 수 있습니다")
             else:
                 st.info("🎨 아직 만들지 않은 AI 장면")
             gen_ok, gen_msg = generate.scene_available(clip.get("engine", "image"))
@@ -878,8 +1143,7 @@ def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
                 if not clip.get("prompt_ko", "").strip():
                     ss.flash = "장면 설명을 먼저 써 주세요."
                 else:
-                    with st.spinner("장면 설명을 영어 프롬프트로 바꾸는 중..."):
-                        added = enqueue_cards(p, short, {uid}, new_seed=again)
+                    added = enqueue_cards(p, short, {uid}, new_seed=again)
                     ss.flash = "큐에 넣었습니다." if added else "이미 만들었거나 큐에 있는 장면입니다."
                 st.rerun()
         with col_opts:
@@ -952,45 +1216,31 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None) -> lis
     return [c for c in short["clips"] if c.get("kind") == "ai" or c["end"] > c["start"]]
 
 
-def make_plan(p: project.Project, on_progress=None) -> None:
-    """사이드바 「쇼츠 개수」만큼 주제를 나눠 편마다 구간·나레이션을 구성한다 (1편이면 영상 전체에서)."""
-    shorts = pipeline.plan_series(p.job, llm_model, ss.short_count, target_sec, llm.STYLES[style_label],
-                                  on_progress=on_progress or (lambda done, n: None))
-    if not shorts or not any(s["clips"] for s in shorts):
-        raise RuntimeError("쓸 만한 구간을 고르지 못했습니다. 다시 구성하거나 쇼츠 길이를 바꿔 보세요.")
-    p.shorts = shorts
-    project.save(p)
-    set_project(p)
+def enqueue_plan(p: project.Project, short: dict | None = None) -> None:
+    """구성 다시 만들기를 큐에 넣는다 (short가 없으면 전체: 여러 편이면 주제 나누기부터)."""
+    if short is None:
+        label = f"{p.name} · 쇼츠 {ss.short_count}편 구성" if p.kind == "upload" else f"AI 대본 · {p.name}"
+        params = {"engine": ss.get("ai_engine", "image")} if p.kind == "ai" else {}
+        enqueue("plan", label, params, p, key=f"plan:{p.dir.name}")
+    else:
+        enqueue("plan", f"{p.name} · '{short['title'][:20]}' 다시 구성", {"short_id": short["id"]}, p,
+                key=f"plan:{p.dir.name}:{short['id']}")
+
+
+def enqueue_make(p: project.Project, shorts: list[dict]) -> None:
+    label = f"'{shorts[0]['title'][:24]}'" if len(shorts) == 1 else f"쇼츠 {len(shorts)}편"
+    enqueue("make", f"{p.name} · {label}", {"short_ids": [x["id"] for x in shorts]}, p,
+            key=f"make:{ME}:{p.dir.name}:{','.join(x['id'] for x in shorts)}")  # 사람마다 설정이 달라 따로 만든다
 
 
 if run_analyze:
-    with st.status("영상을 이해하는 중...", expanded=True) as status:
-        try:
-            st.write("✂️ 구간 자르기, 오디오 추출")
-            job = pipeline.prepare_job(source, start, end)
-            st.write("📝 대사 인식 (Whisper)")
-            pipeline.transcribe(job, get_whisper(dev("asr")))
-            st.write("🖼️ 장면 캡처")
-            pipeline.capture_frames(job)
-            st.write(f"👀 장면 이해 ({llm_model})")
-            bar = st.progress(0.0)
-            pipeline.describe_frames(
-                job, llm_model, on_progress=lambda done, n: bar.progress(done / n, text=f"{done} / {n} 장면")
-            )
-            proj.job = job
-            project.save(proj)  # 구성에서 실패해도 분석 결과는 남긴다
-            if ss.short_count > 1:
-                st.write(f"🧠 서로 다른 주제로 쇼츠 {ss.short_count}편 나누기 + 편마다 구간·나레이션")
-                plan_bar = st.progress(0.0)
-                make_plan(proj, on_progress=lambda done, n: plan_bar.progress(done / n, text=f"{done} / {n}편 구성"))
-            else:
-                st.write("🧠 하이라이트 구간 고르기 + 나레이션 대본 쓰기")
-                make_plan(proj)
-            status.update(label="1단계 완료", state="complete", expanded=False)
-        except Exception as e:
-            status.update(label="1단계 실패", state="error")
-            st.exception(e)
-            st.stop()
+    enqueue("analyze", f"{proj.name} · {start:.0f}~{end:.0f}초", {"start": start, "end": end}, proj,
+            key=f"analyze:{proj.dir.name}")
+    st.rerun()
+
+if project_busy(proj, ("analyze", "plan")):
+    st.info("이 작업의 분석·구성이 큐에서 끝나면 2단계 카드가 나옵니다. 그동안 다른 작업을 열거나 창을 닫아도 큐는 계속 돕니다.")
+    st.stop()
 
 job = proj.job
 if proj.kind == "upload":
@@ -1001,80 +1251,6 @@ if proj.kind == "upload":
         st.text(pipeline.timeline(job) or "(내용 없음)")
 
 # ───────────────────────── 2단계: 구성 수정 / 3단계: 쇼츠 만들기 ─────────────────────────
-def settings_summary() -> str:
-    """결과 기록에 남길 설정 한 줄 요약 (나란히 비교할 때 무엇이 달랐는지 보이게)."""
-    if ss.engine == "edge":
-        voice = f"{VOICE_LABELS.get(ss.edge_voice, ss.edge_voice)} {ss.rate:+d}%"
-    else:
-        chosen = next((v for v in voices.list_voices() if v["id"] == ss.voice_id), None)
-        voice = f"Chatterbox {chosen['name'] if chosen else '기본 목소리'}"
-    layout = {"blur": "블러 배경", "crop": "가운데 크롭", "smart": "피사체 따라 크롭"}.get(ss.layout, ss.layout)
-    subs = "단어 강조 자막" if ss.subtitle_style == "karaoke" else "기본 자막"
-    track = next((t for t in music.list_tracks() if t["id"] == ss.bgm_track), None)
-    bgm = f"배경음악 {track['name']} {ss.bgm_gain:.2f}" if track else "배경음악 없음"
-    return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f} · {bgm}"
-
-
-def ai_models_summary(cards: list[dict]) -> str:
-    kinds = sorted({c.get("engine", "image") for c in cards if c.get("kind") == "ai"})
-    if not kinds:
-        return ""
-    return f" · LLM {llm_model} · AI 장면 {', '.join(generate.MODEL_INFO[k]['name'] for k in kinds)}"
-
-
-def make_engine():
-    if ss.engine == "edge":
-        return tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
-    return tts.ChatterboxEngine(get_chatterbox(dev("tts")), voices.sample_path(ss.voice_id), ss.exaggeration)
-
-
-def build_short(p: project.Project, short: dict, engine) -> None:
-    """쇼츠 한 편을 만들어 결과 기록에 넣는다."""
-    cards = [c for c in short["clips"] if c.get("kind") == "ai" or c["end"] > c["start"]]
-    for c in cards:
-        if c.get("kind") == "ai":
-            if not c.get("prompt_ko", "").strip():
-                raise RuntimeError(f"'{short['title']}'에 장면 설명이 비어 있는 AI 장면이 있습니다.")
-            ensure_prompt(c)
-    clips = pipeline.normalize_clips(p.job, cards) if p.job else cards
-    if not clips:
-        raise RuntimeError(f"'{short['title']}'에 쓸 구간이 없습니다.")
-    bar = st.progress(0.0, text=f"🎙️ {short['title']} 나레이션 음성")
-    video, report = pipeline.make_short(
-        p.job, short["title"] if show_title else "", clips, engine, original_gain, duck_gain,
-        ss.layout, font_size, margin_percent, color,
-        on_progress=lambda done, n: bar.progress(done / n, text=f"🎙️ {short['title']} · {done} / {n} 문장"),
-        out_dir=p.dir / "results",
-        subtitle_style=ss.subtitle_style, highlight_color=ss.highlight_color,
-        music_path=music.track_path(ss.bgm_track), music_gain=ss.bgm_gain, music_duck=ss.bgm_duck,
-        work_dir=p.job.dir if p.job else p.dir / "render", on_status=st.write,
-    )
-    p.results.insert(0, {
-        "id": project.new_id(), "short_id": short["id"], "title": short["title"],
-        "video": str(video), "report": report, "created": project.now(),
-        "duration": round(media.probe(video).duration, 1), "summary": settings_summary() + ai_models_summary(cards),
-    })
-    project.save(p)
-
-
-def replan_short(p: project.Project, short: dict) -> None:
-    """이 쇼츠 한 편만 다시 구성 (여러 편이면 그 편의 원본 범위·주제 안에서, AI 작업이면 주제로 대본부터)."""
-    if p.kind == "ai":
-        engines = {c.get("engine", "image") for c in short["clips"] if c.get("kind") == "ai"}
-        engine = engines.pop() if len(engines) == 1 else "mix"
-        title, clips = pipeline.plan_ai(llm_model, p.topic, target_sec, llm.STYLES[style_label], engine)
-        short.update(title=title, clips=clips)
-        project.save(p)
-        set_project(p)
-        return
-    span = tuple(short.get("range") or (0.0, p.job.duration))
-    title, clips = pipeline.plan(p.job, llm_model, target_sec, llm.STYLES[style_label],
-                                 span=span if len(p.shorts) > 1 else None, focus=short.get("focus", ""))
-    short.update(title=title, clips=clips)
-    project.save(p)
-    set_project(p)
-
-
 def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
     sid = short["id"]
     col_title, col_replan = st.columns([3, 1])
@@ -1091,9 +1267,9 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
         replan_label = ("🔄 대본 다시 만들기" if p.kind == "ai" else
                         "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기")
         if st.button(replan_label, key=f"replan_{sid}", disabled=llm_model is None,
-                     help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 「🧠 대본·구성」의 말투·길이가 반영됩니다."):
-            with st.spinner("다시 구성하는 중..."):
-                replan_short(p, short)
+                     help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 「🧠 대본·구성」의 말투·길이가 반영됩니다. "
+                          "공용 작업 큐에 들어갑니다."):
+            enqueue_plan(p, short)
             st.rerun()
 
     raw_clips = clip_cards(p, short, job)
@@ -1115,12 +1291,11 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
     with col_renarrate:
         if st.button(
             "✍️ 나레이션만 다시 쓰기", key=f"renarr_{sid}", disabled=not clips or llm_model is None,
-            help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다.",
+            help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다. "
+                 "공용 작업 큐에 들어갑니다.",
         ):
-            with st.spinner("나레이션을 쓰는 중..."):
-                short["clips"] = pipeline.narrate(job, raw_clips, llm_model, llm.STYLES[style_label])
-                project.save(p)
-                set_project(p)
+            enqueue("narrate", f"{p.name} · '{short['title'][:20]}' 나레이션", {"short_id": sid}, p,
+                    key=f"narrate:{p.dir.name}:{sid}")
             st.rerun()
 
     ai_cards = [c for c in short["clips"] if c.get("kind") == "ai"]
@@ -1131,19 +1306,14 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
                      disabled=not gen_ok or not not_made,
                      help=gen_msg or "아직 만들지 않은 AI 장면을 전부 생성 큐에 넣습니다. 큐가 차례로 만들고, "
                                      "그동안 다른 카드를 고치거나 큐 순서를 바꿀 수 있습니다."):
-            with st.spinner("장면 설명을 영어 프롬프트로 바꾸는 중..."):
-                added = enqueue_cards(p, short, {c["uid"] for c in not_made})
+            added = enqueue_cards(p, short, {c["uid"] for c in not_made})
             ss.flash = f"AI 장면 {added}개를 큐에 넣었습니다." if added else "모두 이미 만들었거나 큐에 있습니다."
             st.rerun()
 
-    if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips, key=f"make_{sid}"):
-        with st.status("쇼츠를 만드는 중...", expanded=True) as status:
-            try:
-                build_short(p, short, make_engine())
-                status.update(label="완성!", state="complete", expanded=False)
-            except Exception as e:
-                status.update(label="만들기 실패", state="error")
-                st.exception(e)
+    if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips, key=f"make_{sid}",
+                 help="공용 작업 큐에 넣습니다. 지금 설정(목소리·자막·배경음악 등)으로 만들고, 카드는 차례가 됐을 때의 값을 씁니다."):
+        enqueue_make(p, [short])
+        st.rerun()
 
 
 st.divider()
@@ -1153,10 +1323,10 @@ st.caption(
     "순서를 바꾸고 구간을 추가·삭제할 수 있습니다. 나레이션이 구간보다 길면 쇼츠를 만들 때 구간을 자동으로 늘립니다. "
     "고친 내용은 바로 저장됩니다."
 )
-if not proj.shorts and proj.kind == "upload":
-    if st.button("🧠 쇼츠 구성 만들기", type="primary", disabled=llm_model is None):
-        with st.spinner("구성하는 중..."):
-            make_plan(proj)
+if not proj.shorts:  # 구성이 아직 없거나 실패함
+    if st.button("🧠 쇼츠 구성 만들기" if proj.kind == "upload" else "✨ AI 대본 + 장면 구성 만들기", type="primary",
+                 disabled=llm_model is None):
+        enqueue_plan(proj)
         st.rerun()
     st.stop()
 
@@ -1165,19 +1335,11 @@ if proj.kind == "upload" and (len(proj.shorts) > 1 or ss.short_count > 1):
     col_count.markdown(f"**쇼츠 {len(proj.shorts)}편** · 한 영상에서 서로 다른 주제로 나눴습니다.")
     if col_all_plan.button(f"🔄 {ss.short_count}편으로 다시 나누기", disabled=llm_model is None,
                            help="「🧠 대본·구성」의 「쇼츠 개수」만큼 주제를 다시 나누고 편마다 구성합니다."):
-        with st.spinner(f"쇼츠 {ss.short_count}편으로 나누는 중..."):
-            make_plan(proj)
+        enqueue_plan(proj)
         st.rerun()
     if col_all_make.button("🎬 모든 쇼츠 만들기", type="primary", disabled=len(proj.shorts) < 2):
-        with st.status(f"쇼츠 {len(proj.shorts)}편을 만드는 중...", expanded=True) as status:
-            try:
-                engine = make_engine()
-                for item in proj.shorts:
-                    build_short(proj, item, engine)
-                status.update(label=f"{len(proj.shorts)}편 완성!", state="complete", expanded=False)
-            except Exception as e:
-                status.update(label="만들기 실패", state="error")
-                st.exception(e)
+        enqueue_make(proj, proj.shorts)
+        st.rerun()
 
 if len(proj.shorts) == 1:
     short_editor(proj, proj.shorts[0], job)
@@ -1187,83 +1349,6 @@ else:
         with tab:
             short_editor(proj, item, job)
 
-
-# ───────────────────────── AI 장면 생성 큐 ─────────────────────────
-def queue_rows() -> None:
-    """큐 목록: 순서 바꾸기·지우기·취소·다시 시도. 끝난 항목이 생기면 카드를 새로 그린다."""
-    items = genqueue.items()
-    finished = {q["id"] for q in items if q["status"] in (genqueue.DONE, genqueue.FAILED)}
-    if ss.get("queue_finished") is not None and finished - ss.queue_finished:
-        ss.queue_finished = finished
-        st.rerun(scope="app")  # 카드 미리보기·상태를 새로 그림
-    ss.queue_finished = finished
-    waiting = [q for q in items if q["status"] == genqueue.WAITING]
-    running = [q for q in items if q["status"] == genqueue.RUNNING]
-    done = [q for q in items if q["status"] == genqueue.DONE]
-    failed = [q for q in items if q["status"] in (genqueue.FAILED, genqueue.CANCELED)]
-
-    col_info, col_pause, col_clear_done, col_clear_wait = st.columns([3, 1, 1, 1])
-    paused = genqueue.is_paused()
-    col_info.markdown(f"만드는 중 **{len(running)}** · 대기 **{len(waiting)}** · 완료 {len(done)} · 실패·취소 {len(failed)}"
-                      + (" · ⏸ **일시정지됨**" if paused else ""))
-    col_pause.button("▶ 이어서 만들기" if paused else "⏸ 일시정지", key="q_pause", width="stretch",
-                     on_click=genqueue.set_paused, args=(not paused,),
-                     help="일시정지하면 지금 만드는 장면까지만 만들고 멈춥니다.")
-    col_clear_done.button("완료 비우기", key="q_clear_done", width="stretch", disabled=not (done or failed),
-                          on_click=genqueue.clear, args=((genqueue.DONE, genqueue.FAILED, genqueue.CANCELED),))
-    col_clear_wait.button("대기 전부 빼기", key="q_clear_wait", width="stretch", disabled=not waiting,
-                          on_click=genqueue.clear, args=((genqueue.WAITING,),))
-    if not items:
-        st.caption("큐가 비어 있습니다. AI 장면 카드의 「➕ 큐에 넣기」나 「🎬 모두 큐에 넣기」로 넣으세요.")
-        return
-
-    order = running + waiting + failed + done
-    for q in order:
-        with st.container(border=True, key=f"q_{q['id']}"):
-            col_state, col_text, col_btns = st.columns([1.2, 4, 2])
-            kind = "video" if q["engine"] == "video" else "image"
-            if q["status"] == genqueue.WAITING:
-                col_state.markdown(f"⏳ **{waiting.index(q) + 1}번째**")
-            else:
-                col_state.markdown(genqueue.STATUS_LABELS[q["status"]])
-            label = (q["label"] or q["prompt"][:40]).replace("*", "").strip()  # 설명에 ** 가 있으면 굵게 표시가 깨짐
-            col_text.markdown(f"**{label}** · {q['seconds']:.1f}초 · 시드 {q['seed']}")
-            col_text.caption(f"{generate.MODEL_INFO[kind]['name']} · {q['project']} · 넣은 시각 {q['created']}")
-            if q["status"] == genqueue.RUNNING:
-                prog = genqueue.progress(q["id"])
-                if prog.get("total"):
-                    col_text.progress(prog["step"] / prog["total"], text=f"{prog['step']} / {prog['total']} 단계")
-                else:
-                    col_text.caption(prog.get("note", "준비 중"))
-            if q.get("error"):
-                with col_text.expander("실패 이유"):
-                    st.code(q["error"][-600:])
-            b1, b2, b3 = col_btns.columns(3)
-            if q["status"] == genqueue.WAITING:
-                pos = waiting.index(q)
-                b1.button("⬆", key=f"qup_{q['id']}", help="앞으로", disabled=pos == 0,
-                          on_click=genqueue.move, args=(q["id"], -1))
-                b2.button("⬇", key=f"qdown_{q['id']}", help="뒤로", disabled=pos + 1 == len(waiting),
-                          on_click=genqueue.move, args=(q["id"], 1))
-                b3.button("🗑", key=f"qdel_{q['id']}", help="큐에서 빼기", on_click=genqueue.remove, args=(q["id"],))
-            elif q["status"] == genqueue.RUNNING:
-                b3.button("⏹", key=f"qstop_{q['id']}", help="지금 만드는 장면 취소", on_click=genqueue.remove, args=(q["id"],))
-            else:
-                if q["status"] in (genqueue.FAILED, genqueue.CANCELED):
-                    b1.button("🔁", key=f"qretry_{q['id']}", help="다시 시도", on_click=genqueue.retry, args=(q["id"],))
-                b3.button("🗑", key=f"qdel_{q['id']}", help="목록에서 지우기", on_click=genqueue.remove, args=(q["id"],))
-
-
-genqueue.ensure_runner()
-queue_items = genqueue.items()
-if any(c.get("kind") == "ai" for s in proj.shorts for c in s["clips"]) or queue_items:
-    st.divider()
-    active = any(q["status"] in (genqueue.WAITING, genqueue.RUNNING) for q in queue_items)
-    st.subheader("AI 장면 생성 큐")
-    st.caption("넣은 순서대로 한 장면씩 만듭니다. 대기 중인 장면은 순서를 바꾸거나 뺄 수 있고, 다른 카드를 고치는 동안에도 "
-               "계속 만듭니다. 큐는 저장되어 새로고침해도 남습니다. 쇼츠를 만들 때 이미 만든 장면은 다시 만들지 않습니다.")
-    # 만드는 중일 때만 2초마다 새로 고침
-    st.fragment(queue_rows, run_every=2 if active else None)()
 
 # ───────────────────────── 결과 기록 ─────────────────────────
 def delete_result(p: project.Project, result_id: str) -> None:
