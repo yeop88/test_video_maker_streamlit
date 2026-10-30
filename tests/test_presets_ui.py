@@ -133,6 +133,27 @@ if model_before:
     check("설치 안 된 모델은 지금 모델 유지", at.session_state["llm_model"] == model_before
           and any("설치되어 있지 않아" in m for m in messages(at)), messages(at))
 
+# 추천 LLM이 설치되어 있지 않으면 팝업에 설치 버튼 (CPU 추천은 qwen3.5:4b)
+from shorts_maker import llm
+
+try:
+    installed = llm.list_models()
+except Exception:
+    installed = []
+if installed and "qwen3.5:4b" not in installed:
+    at.session_state["device"] = "cpu"
+    at.run()
+    for group in ("🧠 대본·구성", "💻 컴퓨터·AI 모델"):
+        open_group(at, group)
+        check(f"추천 LLM 설치 버튼 ({group})", any(b.label == "⬇️ qwen3.5:4b 설치" for b in at.button),
+              [b.label for b in at.button])
+    at.session_state["device"] = "gpu"
+    at.run()
+    open_group(at, "🧠 대본·구성")
+    check("설치된 추천 LLM이면 설치 버튼 없음 (GPU 추천 qwen3.5:9b)",
+          "qwen3.5:9b" not in installed or not any(b.label.startswith("⬇️") for b in at.button))
+    at.run()
+
 # 삭제
 at.sidebar.selectbox(key="preset_select").select("테스트 프리셋").run()
 button(at, "삭제").click().run()

@@ -97,6 +97,12 @@ def list_models() -> list[str]:
     return sorted(m.model for m in ollama.list().models)
 
 
+def pull_model(name: str):
+    """Ollama 모델을 내려받는다. 진행 상황을 (상태, 받은 바이트, 전체 바이트)로 차례로 돌려준다."""
+    for part in ollama.pull(name, stream=True):
+        yield part.status or "", part.completed or 0, part.total or 0
+
+
 def _chat(model: str, messages: list[dict], schema: type[BaseModel], keep_alive: str, temperature: float):
     kwargs = dict(
         model=model,

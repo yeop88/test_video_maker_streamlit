@@ -4,10 +4,13 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
 ### Added
 - **설정 팝업**: 사이드바에는 프리셋과 「🛠️ 세부 설정」 버튼 5개(대본·구성 / 나레이션 목소리 / 소리·배경음악 / 화면·자막 / 컴퓨터·AI 모델)만 두고, 누르면 분류별 팝업 창에서 설정합니다. 버튼 아래에 지금 설정이 한 줄로 요약됩니다. 본문의 「컴퓨터 사양과 추천 모델」도 「💻 컴퓨터·AI 모델」 팝업으로 옮겼습니다.
 - **최근 작업 지우기**: 「📂 최근 작업」 목록의 🗑 → 확인 팝업(폴더 크기, 지워지는 것 안내) → 작업 폴더를 통째로 지웁니다. 열려 있는 작업이면 닫습니다. 목록은 최대 50개까지 스크롤로 보여 줍니다.
-- **작업별로 나누기 (GPU/CPU)**: 사이드바 「💻 계산 장치」에서 고르면 작업 6개(LLM, Whisper, Chatterbox, AI 이미지, AI 동영상, AI 배경음악)마다 GPU/CPU를 정합니다. 기본은 AI 동영상만 GPU입니다.
+- **추천 LLM 설치 버튼**: 지금 장치의 추천 LLM(예: CPU용 qwen3.5:4b)이 Ollama에 없으면 「🧠 대본·구성」·「💻 컴퓨터·AI 모델」 팝업에 「⬇️ 모델 설치」 버튼이 나옵니다. 누르면 진행 막대와 함께 내려받고, 다 받으면 그 모델을 LLM으로 고릅니다.
+- **작업별로 나누기 (GPU/CPU)**: 「💻 컴퓨터·AI 모델」 팝업에서 고르면 작업 6개(LLM, Whisper, Chatterbox, AI 이미지, AI 동영상, AI 배경음악)마다 GPU/CPU를 정합니다. 기본은 AI 동영상만 GPU입니다.
   - 생성 요청마다 장치를 실어 보내서, 한 생성 프로세스에서 이미지는 CPU, 동영상은 GPU로 만들 수 있습니다.
   - CPU로 정한 작업은 GPU 메모리를 쓰지 않습니다 (측정: CPU 이미지·음악 생성 중 GPU 메모리 0.5~0.7GB 그대로, Ollama `100% CPU`).
   - GPU를 쓰지 않는 생성 전에는 Ollama 모델을 내리지 않습니다.
@@ -20,18 +23,18 @@
   - 쇼츠를 만들 때 큐에서 만든 장면은 다시 만들지 않습니다.
 - **사용하는 AI 모델 표시**: AI 모드 시작 화면에 「🤖 사용하는 AI 모델」 표(대본·장면 구성 LLM, 이미지·동영상·음악 생성 모델, 음성), 장면 만드는 방식·카드·큐에 모델 이름, 결과 요약에 LLM·AI 장면 모델.
 - **컴퓨터 사양과 추천 모델** (`shorts_maker/system.py`): GPU·VRAM, RAM, CPU, 디스크 여유를 보여 주고 작업별로 GPU로 돌릴 때와 CPU로 돌릴 때 추천 모델, 이 PC에서 쓸 수 있는지를 표로 보여 줍니다.
-- **계산 장치 설정** (사이드바 「💻 계산 장치」): GPU만 / GPU + CPU 함께 / CPU만.
+- **계산 장치 설정** (「💻 컴퓨터·AI 모델」 팝업): GPU만 / GPU + CPU 함께 / CPU만.
   - Whisper·Chatterbox를 고른 장치에 올립니다 (바꾸면 내리고 다시 불러옴).
   - CPU만이면 Ollama 모델을 GPU에 올리지 않습니다 (`num_gpu=0`).
   - AI 생성: GPU + CPU 함께는 모델을 RAM에 두고 쓸 부분만 GPU로 옮기고(`enable_model_cpu_offload`), CPU만은 fp32로 CPU에서 만듭니다.
   - 컴퓨터마다 다른 설정이라 프리셋에 넣지 않고 `workdir/device.json`에 저장합니다. 처음에는 사양에 맞춰 고릅니다 (VRAM 12GB 이상 GPU, 6GB 이상 GPU + CPU, 그 밖에는 CPU).
 
-- **LTX-2.5 (22B) AI 동영상**: 사이드바 「AI 동영상 모델」에서 LTX-Video 2B 대신 고를 수 있습니다.
+- **LTX-2.5 (22B) AI 동영상**: 「💻 컴퓨터·AI 모델」 팝업의 「AI 동영상 모델」에서 LTX-Video 2B 대신 고를 수 있습니다.
   - 전용 환경 `.venv-ltx`([requirements-ltx.txt](requirements-ltx.txt), diffusers 개발판). Hugging Face 로그인과 라이선스 동의가 필요하며, 안 되어 있으면 화면에 할 일을 알려 줍니다.
   - **양자화**: 4bit(NF4, 추천: GPU 최대 12.3GB, 장면당 약 1분 15초) / 8bit(fp8 + RAM 그룹 오프로딩: 장면당 약 10분). 양자화한 가중치는 `workdir/models/`에 저장해 다음부터 바로 불러옵니다.
   - ComfyUI 공식 워크플로 값: 2단계 distilled(시그마 8개 → x2 업스케일 → 3개), 704×1280, 121프레임 24fps, 가이던스 1.0.
   - 내려받기는 쓰는 부분만 (약 71GB). 저장소에 같은 가중치가 두 벌 있는 부분(약 48GB)은 받지 않습니다.
-- **AI 이미지 모델 선택**: 사이드바 「AI 이미지 모델」에서 SDXL-Turbo, DreamShaper XL Lightning, DreamShaper XL v2 Turbo, FLUX.2 [klein] 4B, FLUX.2 [klein] 9B(4bit) 중에서 고릅니다. 모델 카드 권장 해상도·단계·가이던스·스케줄러를 씁니다.
+- **AI 이미지 모델 선택**: 「💻 컴퓨터·AI 모델」 팝업의 「AI 이미지 모델」에서 SDXL-Turbo, DreamShaper XL Lightning, DreamShaper XL v2 Turbo, FLUX.2 [klein] 4B, FLUX.2 [klein] 9B(4bit) 중에서 고릅니다. 모델 카드 권장 해상도·단계·가이던스·스케줄러를 씁니다.
 - `tests/test_ltx25.py`: LTX-2.5 실제 생성 확인 (해상도·길이·움직임·진행 알림·GPU 최대치·시간).
 
 ### Changed
@@ -241,7 +244,8 @@
 - [docs/huggingface_streamlit_examples.md](docs/huggingface_streamlit_examples.md): Streamlit으로 배포하기 좋은 Hugging Face 예제 30선
 - [docs/huggingface_service_ideas.md](docs/huggingface_service_ideas.md): 모델 조합 프로젝트 아이디어 10선 (2026-10-29 비상업·난이도 순으로 개정)
 
-[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yeop88/test_video_maker_streamlit/releases/tag/v0.3.0

@@ -60,6 +60,8 @@ ss = st.session_state
 for key, value in presets.DEFAULTS.items():
     # 지금 화면에 없는 위젯(예: Edge 목소리를 Chatterbox 선택 중)의 값은 Streamlit이 지우므로 매번 다시 넣어 둔다
     ss[key] = ss[key] if key in ss else value
+if ss.get("pending_llm") in models:  # 팝업에서 방금 설치한 모델 (위젯을 그리기 전에 옮김)
+    ss.llm_model = ss.pop("pending_llm")
 if models and ss.llm_model not in models:
     ss.llm_model = config.DEFAULT_OLLAMA_MODEL if config.DEFAULT_OLLAMA_MODEL in models else models[0]
 specs = get_specs()
@@ -125,7 +127,7 @@ def apply_recommended() -> None:
         if rec["key"] is None or ss.get(rec["key"]) == rec["choice"]:
             continue
         if rec["key"] == "llm_model" and rec["choice"] not in models:
-            skipped.append(f"{rec['choice']} (설치 안 됨: `ollama pull {rec['choice']}`)")
+            skipped.append(f"{rec['choice']} (설치 안 됨: 「⬇️ {rec['choice']} 설치」 버튼으로 받을 수 있음)")
             continue
         ss[rec["key"]] = rec["choice"]
         changed.append(f"{system.TASKS[task]} → {current_model(task)}")
@@ -262,6 +264,32 @@ def close_button() -> None:
         st.rerun()  # 팝업을 닫고 바뀐 설정을 화면 전체에 반영
 
 
+def llm_missing() -> str | None:
+    """지금 장치의 추천 LLM이 Ollama에 없으면 그 이름 (Ollama에 연결되지 않으면 None)."""
+    choice = recommendations()["llm"]["choice"]
+    return choice if models and choice and choice not in models else None
+
+
+def install_llm_button(name: str, dialog: str) -> None:
+    """설치되지 않은 Ollama 모델을 내려받는 버튼. 다 받으면 그 모델을 고르고 같은 팝업을 다시 연다."""
+    if not st.button(f"⬇️ {name} 설치", key=f"install_llm_{dialog}", width="stretch",
+                     help="Ollama에서 모델을 내려받습니다 (`ollama pull`과 같음). 몇 GB라 몇 분 걸릴 수 있습니다."):
+        return
+    bar = st.progress(0.0, text=f"{name} 내려받는 중...")
+    try:
+        for status, done, total in llm.pull_model(name):
+            size = f" {done / 1024 ** 3:.1f} / {total / 1024 ** 3:.1f} GB" if total else ""
+            bar.progress(min(done / total, 1.0) if total else 0.0, text=f"{name}: {status}{size}")
+    except Exception as e:  # 이름 오류, 인터넷 끊김 등
+        st.error(f"{name}을(를) 내려받지 못했습니다: {e}")
+        return
+    get_ollama_models.clear()
+    ss.pending_llm = name
+    ss.reopen_dialog = dialog
+    ss.preset_msg = ("success", f"{name}을(를) 설치하고 LLM으로 골랐습니다.")
+    st.rerun()
+
+
 def device_summary() -> str:
     if ss.device == "split":
         gpu_tasks = [system.TASKS[t].split(" (")[0] for t in system.TASKS if dev(t) != "cpu"]
@@ -300,9 +328,13 @@ def computer_settings() -> None:
         st.markdown("**추천 모델** (장치를 바꾸면 추천도 바뀝니다)")
         st.table([{"작업": label, "장치": DEVICE_SHORT[dev(t)], "추천 모델 (지금 장치 기준)": recs[t]["text"],
                    "지금 고른 모델": current_model(t),
-                   "상태": ("✅ 추천대로" if is_recommended(t, recs[t]) else "↔ 추천과 다름") + " · "
+                   "상태": ("✅ 추천대로" if is_recommended(t, recs[t]) else
+                           "⬇️ 추천 모델 설치 안 됨" if t == "llm" and llm_missing() else "↔ 추천과 다름") + " · "
                            + system.fits(recs[t]["need"], specs, dev(t))}
                   for t, label in system.TASKS.items()], hide_index=True)
+        if missing := llm_missing():
+            st.info(f"추천 LLM **{missing}**이(가) 아직 설치되어 있지 않습니다.")
+            install_llm_button(missing, "💻 컴퓨터·AI 모델")
         st.button("✨ 추천 모델로 맞추기", on_click=apply_recommended, width="stretch",
                   disabled=all(is_recommended(t, r) for t, r in recs.items()))
         st.caption("이 설정은 프리셋에 넣지 않고 이 컴퓨터에 저장합니다. GPU 메모리는 모델을 하나씩 쓸 때 기준입니다.")
@@ -342,6 +374,8 @@ def script_settings() -> None:
         st.selectbox("LLM (Ollama)", models, key="llm_model",
                      help="장면 이미지를 이해해야 하므로 vision을 지원하는 모델(qwen3.5, gemma4 등)을 고르세요.")
         st.caption(f"추천 ({DEVICE_SHORT[dev('llm')]}): {recommendations()['llm']['text']}")
+        if missing := llm_missing():
+            install_llm_button(missing, "🧠 대본·구성")
     st.selectbox("나레이션 말투", presets.CHOICES["style"], key="style")
     setting_slider("쇼츠 길이 목표 (초)", "target_sec")
     setting_slider("쇼츠 개수 (한 영상에서)", "short_count",
@@ -509,11 +543,12 @@ with st.sidebar:
     if loaded:
         changed = loaded[1] != current_settings()
         st.caption(f"현재: {loaded[0]}" + (" (수정됨)" if changed else ""))
-    show_message()
+    open_dialog = ss.pop("reopen_dialog", None)  # 팝업 안 작업(모델 설치 등) 뒤 같은 팝업을 다시 엶
+    if not open_dialog:
+        show_message()  # 다시 여는 팝업이 있으면 알림은 팝업 안에서 보여 줌
 
     st.subheader("🛠️ 세부 설정")
     st.caption("누르면 팝업 창에서 바꿀 수 있습니다.")
-    open_dialog = None
     for label, _, _, summary in SETTING_GROUPS:
         if st.button(label, key=f"open_{label}", width="stretch"):
             open_dialog = label
