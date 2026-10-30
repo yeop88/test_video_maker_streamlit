@@ -430,6 +430,19 @@ def test_series():
         "topics_separated(lake, sleep)": sorted(kinds) == ["lake", "sleep"],
         "titles_distinct": len({s["title"] for s in shorts}) == len(shorts),
     }
+    # 컷 전환(호수 → 수면 팁)을 찾고, 나레이션이 길어 구간을 늘려도 컷을 넘지 않는지
+    # (예전에는 뒤쪽 주제의 첫 구간이 앞으로 늘어나 호수 화면 위에 다른 주제 나레이션이 나왔음)
+    cuts = pipeline.scene_cuts(job)
+    r["cuts"] = cuts
+    checks["cut_found_at_topic_boundary"] = any(abs(c - split_at) < 0.3 for c in cuts)
+    crossing = []
+    for s in shorts:
+        clips = pipeline.normalize_clips(job, s["clips"])
+        spans = pipeline.fit_clips(job, clips, [(c["end"] - c["start"]) * 2 + 2 for c in clips])  # 일부러 긴 나레이션
+        crossing += [(a, b) for a, b in spans for c in cuts if a + 0.05 < c < b - 0.05 and not any(
+            x["start"] + 0.05 < c < x["end"] - 0.05 for x in clips)]  # 원래 구간이 컷을 품고 있던 경우는 제외
+    r["spans_crossing_cut"] = crossing
+    checks["extended_clips_dont_cross_cut"] = not crossing
     outs = []
     engine = tts.EdgeTTSEngine("ko-KR-InJoonNeural", 10)
     for s in shorts:

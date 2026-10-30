@@ -33,6 +33,7 @@ CHOICES = {
     "edge_voice": list(EDGE_VOICES.values()),
     "layout": ["blur", "crop", "smart"],
     "subtitle_style": ["plain", "karaoke"],
+    "title_style": ["bold", "box", "band"],
 }
 
 DEFAULTS = {
@@ -53,10 +54,11 @@ DEFAULTS = {
     "layout": "blur",
     "show_title": True,
     "font_size": 72,
-    "margin_percent": 20,
+    "margin_percent": 24,  # 쇼츠 앱이 아래쪽 약 20%를 가리므로 그 위로
     "color": "#FFFFFF",
     "subtitle_style": "plain",
     "highlight_color": "#FFE600",
+    "title_style": "bold",  # 제목 모양: 크고 굵은 두 줄(핵심 낱말 강조) / 반투명 상자 / 위쪽 띠
 }
 
 # 기본 제공 프리셋 (덮어쓰거나 지울 수 없음). 빠진 값은 DEFAULTS를 따른다.
@@ -64,11 +66,11 @@ BUILTIN = {
     "기본": {},
     "감성 브이로그": {
         "style": "감성 스토리", "target_sec": 30, "rate": 0,
-        "original_gain": 0.9, "duck_gain": 0.3, "font_size": 68, "margin_percent": 18,
+        "original_gain": 0.9, "duck_gain": 0.3, "font_size": 68, "margin_percent": 22, "title_style": "box",
     },
     "정보 요약 (빠르게)": {
         "style": "정보 전달 (차분한 설명)", "target_sec": 45, "edge_voice": "ko-KR-InJoonNeural", "rate": 20,
-        "original_gain": 0.6, "duck_gain": 0.15, "font_size": 76, "color": "#FFE600",
+        "original_gain": 0.6, "duck_gain": 0.15, "font_size": 76, "color": "#FFE600", "title_style": "band",
     },
     "유쾌한 리뷰": {
         "style": "유쾌한 리뷰", "subtitle_style": "karaoke", "highlight_color": "#FFE600", "target_sec": 30, "edge_voice": "ko-KR-HyunsuMultilingualNeural", "rate": 15,

@@ -10,8 +10,8 @@ import pyarrow  # noqa: F401
 import streamlit as st
 
 import shorts_maker
-from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, project, system, tasks, tts,
-                          voices)
+from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, preview, project, subtitles,
+                          system, tasks, tts, voices)
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -23,6 +23,7 @@ LAYOUT_LABELS = {
 }
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 SUBTITLE_LABELS = {"plain": "기본", "karaoke": "단어 강조 (읽는 낱말 색칠)"}
+TITLE_LABELS = {"bold": "크고 굵게 (핵심 낱말 강조)", "box": "반투명 상자", "band": "위쪽 띠"}
 VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -598,16 +599,48 @@ def sound_settings() -> None:
 def screen_settings() -> None:
     """🎬 화면·자막: 세로 변환, 제목, 자막 스타일·크기·위치·색."""
     show_message()
-    st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
-    st.checkbox("위쪽에 제목 표시", key="show_title")
-    st.radio("자막 스타일", presets.CHOICES["subtitle_style"], format_func=SUBTITLE_LABELS.get, key="subtitle_style",
-             help="단어 강조: 나레이션이 읽는 낱말을 다른 색으로 조금 크게 보여 줍니다.")
-    if ss.subtitle_style == "karaoke":
-        st.color_picker("강조 색", key="highlight_color")
-    setting_slider("자막 크기", "font_size")
-    setting_slider("자막 위치 (아래에서 %)", "margin_percent")
-    st.color_picker("자막 색", key="color")
+    col_set, col_view = st.columns([3, 2])
+    with col_set:
+        st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
+        st.checkbox("위쪽에 제목 표시", key="show_title")
+        st.radio("제목 모양", presets.CHOICES["title_style"], format_func=TITLE_LABELS.get, key="title_style",
+                 horizontal=True, disabled=not ss.show_title)
+        st.radio("자막 스타일", presets.CHOICES["subtitle_style"], format_func=SUBTITLE_LABELS.get, key="subtitle_style",
+                 help="단어 강조: 나레이션이 읽는 낱말을 다른 색으로 조금 크게 보여 줍니다.", horizontal=True)
+        setting_slider("자막 크기", "font_size")
+        setting_slider("자막 위치 (아래에서 %)", "margin_percent",
+                       help=f"쇼츠 앱은 아래쪽 약 {subtitles.SAFE_BOTTOM:.0%}를 제목·채널·설명으로 가립니다. "
+                            "미리보기의 빨간 부분을 피하세요.")
+        col_c1, col_c2 = st.columns(2)
+        col_c1.color_picker("자막 색", key="color")
+        col_c2.color_picker("강조 색", key="highlight_color", help="제목의 핵심 낱말(굵은 제목)과 단어 강조 자막에 씁니다.")
+    with col_view:
+        st.checkbox("앱 UI가 가리는 곳 보기", key="show_safe_guide", value=True,
+                    help="쇼츠 앱의 상태 표시줄·제목·버튼이 덮는 대략적인 곳 (공식 수치가 없어 참고용)")
+        st.image(style_preview(), caption="미리보기 (실제 쇼츠와 같은 방법으로 그림)", width="stretch")
+        if ss.margin_percent < subtitles.SAFE_BOTTOM * 100:
+            st.caption(f"⚠️ 자막이 아래쪽 앱 UI({subtitles.SAFE_BOTTOM:.0%})에 가려질 수 있습니다.")
     close_button()
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def preview_background(video: str, t: float, layout: str) -> bytes:
+    return media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, config.OUTPUT_SIZE)
+
+
+def style_preview() -> bytes:
+    """화면·자막 설정 미리보기. 열어 둔 작업이 있으면 첫 원본 구간의 장면과 그 나레이션을 쓴다."""
+    background, title, text = None, preview.SAMPLE_TITLE, preview.SAMPLE_TEXT
+    p = ss.get("project")
+    if p is not None and p.shorts:
+        short = p.shorts[0]
+        title = short["title"] or title
+        clip = next((c for c in short["clips"] if c.get("kind") != "ai" and c["end"] > c["start"]), None)
+        if clip and p.job is not None:
+            background = preview_background(str(p.job.video), (clip["start"] + clip["end"]) / 2, ss.layout)
+        text = next((c["narration"] for c in short["clips"] if c.get("narration")), text)
+    return preview.render(background, title, text, ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style,
+                          ss.highlight_color, ss.title_style, ss.show_title, ss.get("show_safe_guide", True))
 
 
 def voice_summary() -> str:
@@ -629,7 +662,9 @@ SETTING_GROUPS = [
     ("🎙️ 나레이션 목소리", "나레이션 목소리 설정", voice_settings, voice_summary),
     ("🔊 소리·배경음악", "소리·배경음악 설정", sound_settings, sound_summary),
     ("🎬 화면·자막", "화면·자막 설정", screen_settings,
-     lambda: f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · {SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"),
+     lambda: f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · "
+             + (f"제목 {TITLE_LABELS[ss.title_style].split(' (')[0]} · " if ss.show_title else "제목 없음 · ")
+             + f"{SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"),
     ("💻 컴퓨터·AI 모델", "컴퓨터와 AI 모델 설정", computer_settings,
      lambda: f"{device_summary()} · {generate.IMAGE_MODELS[ss.image_model]['name']} · {generate.MODEL_INFO['video']['name']}"),
 ]

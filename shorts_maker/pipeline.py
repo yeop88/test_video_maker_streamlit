@@ -100,9 +100,33 @@ def capture_frames(job: Job) -> None:
         t += interval
 
 
+def _thumb(path: Path):
+    import cv2
+
+    image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    return None if image is None else cv2.resize(image, (96, 54), interpolation=cv2.INTER_AREA).astype(np.int16)
+
+
+def same_scene(a, b) -> bool:
+    """두 캡처가 거의 같은 장면인지 (config.SAME_SCENE_* 참고)."""
+    if a is None or b is None:
+        return False
+    changed = np.abs(a - b) > 25
+    blocks = changed.reshape(6, 9, 8, 12).mean(axis=(1, 3))
+    return changed.mean() < config.SAME_SCENE_CHANGED and blocks.max() < config.SAME_SCENE_BLOCK
+
+
 def describe_frames(job: Job, model: str, on_progress: Progress = _no_progress) -> None:
+    """캡처마다 LLM으로 장면을 설명한다. 바로 앞에서 설명한 장면과 거의 같으면 그 설명을 다시 쓴다 (연속 MAX_REUSED_FRAMES번까지)."""
+    last_image, last_caption, streak = None, "", 0
     for i, frame in enumerate(job.frames):
-        frame["caption"] = llm.describe_frame(model, frame["path"])
+        image = _thumb(frame["path"])
+        if streak < config.MAX_REUSED_FRAMES and same_scene(image, last_image):
+            frame["caption"], frame["reused"] = last_caption, True
+            streak += 1
+        else:
+            frame["caption"] = llm.describe_frame(model, frame["path"])
+            last_image, last_caption, streak = image, frame["caption"], 0
         on_progress(i + 1, len(job.frames))
 
 
@@ -339,14 +363,56 @@ def split_sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?…~])\s+", text.strip()) if s.strip()]
 
 
+def hard_cut(a, b) -> bool:
+    """두 캡처가 완전히 다른 장면인지 (화면 대부분이 바뀜: 컷 전환). 카메라 이동처럼 서서히 바뀌는 것은 아님.
+    측정: 호수 → 추상 조형물 컷 0.94/1.0, 같은 배경의 슬라이드 넘김 0.18~0.25/0.66~1.0."""
+    if a is None or b is None:
+        return False
+    changed = np.abs(a - b) > 25
+    return changed.mean() > 0.5 and changed.reshape(6, 9, 8, 12).mean(axis=(1, 3)).max() > 0.9
+
+
+def scene_cuts(job: Job) -> list[float]:
+    """원본의 컷 전환 시각. 캡처(2초 간격) 사이가 컷이면 그 사이를 반씩 나눠 보며 0.1초 안쪽으로 찾는다."""
+    cached = getattr(job, "_cuts", None)
+    if cached is not None:
+        return cached
+    folder = job.dir / "cuts"
+    folder.mkdir(exist_ok=True)
+
+    def thumb_at(t: float):
+        path = folder / f"{t:.2f}.jpg"
+        if not path.exists():
+            media.extract_frame(job.video, t, path, 160)
+        return _thumb(path) if path.exists() else None
+
+    cuts = []
+    for f1, f2 in zip(job.frames, job.frames[1:]):
+        before, after = _thumb(f1["path"]), _thumb(f2["path"])
+        if not hard_cut(before, after):
+            continue
+        lo, hi = f1["t"], f2["t"]
+        while hi - lo > 0.1:
+            mid = (lo + hi) / 2
+            if hard_cut(before, thumb_at(mid)):
+                hi = mid
+            else:
+                lo = mid
+        cuts.append(round(hi, 2))
+    job._cuts = cuts  # type: ignore[attr-defined]
+    return cuts
+
+
 def fit_clips(job: Job | None, clips: list[dict], speech_sec: list[float]) -> list[tuple[float, float]]:
     """나레이션이 구간보다 길면 구간 끝을 늘리고 (다음 구간과 겹치지 않게), 모자라면 앞을 늘린다.
     AI 장면은 나레이션 길이에 맞춰 그대로 늘린다 ((0, 길이)로 돌려줌).
 
     그래도 넘친 나레이션은 다음 구간에서 이어서 나오므로, 넘친 만큼 다음 구간이 더 길어야 한다.
+    늘릴 때 원본의 컷 전환(scene_cuts)은 넘지 않는다 (다른 장면 위에 이 구간의 나레이션이 나오지 않게).
     """
     spans = []
     overflow = 0.0
+    cuts = scene_cuts(job) if job is not None and any(not is_ai(c) for c in clips) else []
     for i, (clip, speech) in enumerate(zip(clips, speech_sec)):
         start_at = max(LEAD_SEC, overflow - TAIL_SEC + config.NARRATION_GAP) if overflow > 0 else LEAD_SEC
         need = start_at + speech + TAIL_SEC if speech > 0 else overflow
@@ -360,6 +426,8 @@ def fit_clips(job: Job | None, clips: list[dict], speech_sec: list[float]) -> li
         limit = nxt if nxt > a else job.duration
         prev = [(s, c) for s, c in zip(spans, clips) if not is_ai(c)]
         floor = prev[-1][0][1] if prev and prev[-1][0][1] <= a else 0.0
+        limit = min([limit] + [t for t in cuts if t >= b - 0.05])  # 구간 뒤 첫 컷까지만
+        floor = max([floor] + [t for t in cuts if t <= a + 0.05])  # 구간 앞 마지막 컷부터
         if b - a < need:  # 늘린 끝이 원본 대사 중간이면 대사가 끝나는 곳까지 (안 되면 시작 전까지)
             b = _safe_cut(job, min(limit, a + need), a + MIN_CLIP_SEC, limit, prefer_later=True)
         if b - a < need:
@@ -395,6 +463,7 @@ def make_short(
     out_dir: Path | None = None,
     subtitle_style: str = "plain",
     highlight_color: str = "#FFE600",
+    title_style: str = "box",
     music_path: Path | None = None,
     music_gain: float = 0.25,
     music_duck: float = 0.4,
@@ -535,6 +604,7 @@ def make_short(
         cues, work / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
         title=title, title_end=total,
         highlight=highlight_color if subtitle_style == "karaoke" else None,
+        title_style=title_style, title_color=highlight_color,
     )
     out_dir = out_dir or work
     out_dir.mkdir(parents=True, exist_ok=True)

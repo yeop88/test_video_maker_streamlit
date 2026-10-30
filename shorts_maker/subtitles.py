@@ -129,6 +129,22 @@ def build_cues(rows: list[dict], max_chars: int, max_lines: int = 2) -> list[Cue
     return cues
 
 
+# 제목 모양. 화면 문구는 app.py, 설정 이름은 presets.CHOICES["title_style"]
+TITLE_STYLES = ("bold", "box", "band")
+
+# 쇼츠 화면에서 앱 UI가 가리는 곳 (1080x1920 기준 비율, 참고용). 공식 수치가 없어 여러 안내의 넉넉한 쪽을 썼다:
+# 위 상태 표시줄·검색 (약 100~200px), 아래 제목·채널·설명 (약 180px 이상, 설명이 길면 더), 오른쪽 좋아요·댓글 버튼 열 (약 80~120px).
+SAFE_TOP, SAFE_BOTTOM, SAFE_RIGHT = 0.10, 0.20, 0.11
+
+
+def title_keyword(tokens: list[str]) -> int:
+    """제목에서 색으로 강조할 낱말: 숫자가 든 첫 낱말, 없으면 마지막 낱말."""
+    for i, tok in enumerate(tokens):
+        if re.search(r"\d", tok):
+            return i
+    return len(tokens) - 1
+
+
 def _ass_time(sec: float) -> str:
     cs = int(round(sec * 100))
     h, cs = divmod(cs, 360000)
@@ -163,15 +179,29 @@ def write_ass(
     title: str = "",
     title_end: float = 0.0,
     highlight: str | None = None,
+    title_style: str = "box",
+    title_color: str = "#FFE600",
 ) -> None:
-    """title이 있으면 0초부터 title_end까지 화면 위쪽에 반투명 상자로 계속 보여 준다.
+    """title이 있으면 0초부터 title_end까지 화면 위쪽에 계속 보여 준다. title_style:
+    - "bold": 크고 굵은 두 줄 제목, 굵은 외곽선, 숫자가 든 낱말(없으면 마지막 낱말)을 title_color로 강조
+    - "box": 반투명 상자 안에 한 줄 (예전 모양)
+    - "band": 화면 위쪽 전체 폭의 어두운 띠 위에 흰 글씨
     highlight(색)를 주면 단어 강조 자막: 지금 읽는 낱말만 그 색으로 조금 크게 보인다."""
     title = clean_text(title)
     w, h = size
     outline = max(3, font_size // 12)
-    # 제목은 되도록 한 줄로: 길면 글자 크기를 줄인다 (자막 크기의 70%까지)
-    title_size = int(font_size * 1.05)
-    title_size = max(int(font_size * 0.7), min(title_size, (w - 80) // max(1, len(title.strip()))))
+    top = int(h * SAFE_TOP)  # 위쪽 앱 UI 아래부터
+    if title_style == "bold":  # 두 줄까지 크게 (자막 크기의 135%, 두 줄에 안 들어가면 85%까지 줄임)
+        title_size = int(font_size * 1.35)
+        while title_size > font_size * 0.85 and len(wrap(title, chars_per_line(title_size, w, side_margin=70))) > 2:
+            title_size -= 2
+    elif title_style == "band":
+        title_size = int(font_size * 1.1)
+        while title_size > font_size * 0.8 and len(wrap(title, chars_per_line(title_size, w, side_margin=50))) > 1:
+            title_size -= 2
+    else:  # 제목은 되도록 한 줄로: 길면 글자 크기를 줄인다 (자막 크기의 70%까지)
+        title_size = int(font_size * 1.05)
+        title_size = max(int(font_size * 0.7), min(title_size, (w - 80) // max(1, len(title.strip()))))
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {w}
@@ -183,14 +213,36 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{font_family},{font_size},{_ass_color(color)},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},2,2,60,60,{margin_v},1
 Style: Title,{font_family},{title_size},&H00FFFFFF,&H000000FF,&H60000000,&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,60,60,{int(h * 0.08)},1
+Style: TitleBold,{font_family},{title_size},&H00FFFFFF,&H000000FF,&H00000000,&H90000000,-1,0,0,0,100,100,-1,0,1,{max(6, title_size // 9)},4,8,70,70,{top + 20},1
+Style: TitleBand,{font_family},{title_size},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,50,50,{top + 36},1
+Style: Band,{font_family},20,&H30000000,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
-    if title.strip():
+    when = f"{_ass_time(0)},{_ass_time(title_end)}"
+    if title.strip() and title_style == "bold":
+        lines = wrap(title.strip(), chars_per_line(title_size, w, side_margin=70))[:2]
+        key = title_keyword([t for ln in lines for t in ln.split()])
+        k, parts = 0, []
+        for ln in lines:
+            words = []
+            for tok in ln.split():
+                tok = tok.replace("{", "(").replace("}", ")")
+                words.append(f"{{\\c{_ass_rgb(title_color)}}}{tok}{{\\c&HFFFFFF&}}" if k == key else tok)
+                k += 1
+            parts.append(" ".join(words))
+        events.append(f"Dialogue: 1,{when},TitleBold,,0,0,0,," + r"\N".join(parts))
+    elif title.strip() and title_style == "band":
+        lines = wrap(title.strip(), chars_per_line(title_size, w, side_margin=50))[:2]
+        band_h = top + 36 + int(title_size * 1.25) * len(lines) + 36
+        # 띠는 ASS 그림(\p1)으로: 위 끝부터 제목 아래까지 전체 폭 사각형
+        events.append(f"Dialogue: 0,{when},Band,,0,0,0,,{{\\pos(0,0)\\p1}}m 0 0 l {w} 0 l {w} {band_h} l 0 {band_h}{{\\p0}}")
+        events.append(f"Dialogue: 1,{when},TitleBand,,0,0,0,,{_ass_text(lines)}")
+    elif title.strip():
         lines = wrap(title.strip(), chars_per_line(title_size, w, side_margin=40))[:2]
-        events.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(title_end)},Title,,0,0,0,,{_ass_text(lines)}")
+        events.append(f"Dialogue: 1,{when},Title,,0,0,0,,{_ass_text(lines)}")
     for start, end, lines, words in cues:
         if not (highlight and words):
             events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{_ass_text(lines)}")

@@ -230,6 +230,7 @@ def make(item: dict, report) -> dict:
             on_progress=lambda d, t: report(step=d, total=t, note=f"{prefix}🎙️ {title} · {d} / {t} 문장"),
             out_dir=folder / "results",
             subtitle_style=s["subtitle_style"], highlight_color=s["highlight_color"],
+            title_style=s.get("title_style", "box"),
             music_path=music.track_path(s["bgm_track"]), music_gain=s["bgm_gain"], music_duck=s["bgm_duck"],
             work_dir=proj.job.dir if proj.job else folder / "render", on_status=lambda m: report(line=prefix + m),
         )

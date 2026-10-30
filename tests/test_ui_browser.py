@@ -440,14 +440,25 @@ def test_ai_mode(page, out: Path):
     check("모두 큐에 넣기 → 장면 수만큼 대기", len(waiting) == cards.count(), f"대기 {len(waiting)} / 장면 {cards.count()}")
     row_id = lambda r: next(c for c in r.get_attribute("class").split() if c.startswith("st-key-q_"))  # noqa: E731
     first_id = row_id(waiting[0])
-    waiting[0].get_by_role("button", name="⬇").click()
-    page.wait_for_timeout(1500)
-    rows = [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]
-    check("큐 순서 바꾸기 (⬇)", row_id(rows[1]) == first_id, f"{first_id} → 2번째")
-    rows[-1].get_by_role("button", name="🗑").click()
-    page.wait_for_timeout(1500)
-    rows = [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]
-    check("큐에서 빼기 (🗑)", len(rows) == cards.count() - 1, f"대기 {len(rows)}")
+    waiting_rows = lambda: [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]  # noqa: E731
+
+    def click_until(button, done) -> bool:
+        """큐 패널은 2초마다 다시 그려져서, 그리는 중에 누른 버튼은 무시될 수 있다. 조용할 때 누르고 바뀔 때까지 확인."""
+        for _ in range(3):
+            wait_idle(page)
+            button().click()
+            for _ in range(10):
+                page.wait_for_timeout(500)
+                if done():
+                    return True
+        return False
+
+    moved = click_until(lambda: waiting_rows()[0].get_by_role("button", name="⬇"),
+                        lambda: row_id(waiting_rows()[1]) == first_id)
+    check("큐 순서 바꾸기 (⬇)", moved, f"{first_id} → 2번째")
+    removed = click_until(lambda: waiting_rows()[-1].get_by_role("button", name="🗑"),
+                          lambda: len(waiting_rows()) == cards.count() - 1)
+    check("큐에서 빼기 (🗑)", removed, f"대기 {len(waiting_rows())}")
     t = time.time()
     page.get_by_role("button", name="▶ 이어서").click()
     page.wait_for_function(
