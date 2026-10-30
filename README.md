@@ -42,13 +42,13 @@
 | 목소리 구간 감지 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT |
 | 나레이션 음성 (기본) | Microsoft Edge TTS (`edge-tts`) | 온라인 서비스 |
 | 나레이션 음성 (선택) | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) Multilingual, 기본 목소리 또는 **목소리 보관함**의 목소리를 제로샷 복제 | MIT |
-| 장면 이미지 (선택) | [stabilityai/sdxl-turbo](https://huggingface.co/stabilityai/sdxl-turbo) | 비상업 연구용 |
-| 장면 영상 (선택) | [Lightricks/LTX-Video](https://huggingface.co/Lightricks/LTX-Video) | LTX 오픈 가중치 |
+| 장면 이미지 (선택, 하나 고름) | [stabilityai/sdxl-turbo](https://huggingface.co/stabilityai/sdxl-turbo), [Lykon/dreamshaper-xl-lightning](https://huggingface.co/Lykon/dreamshaper-xl-lightning), [Lykon/dreamshaper-xl-v2-turbo](https://huggingface.co/Lykon/dreamshaper-xl-v2-turbo), [FLUX.2 [klein] 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B), [FLUX.2 [klein] 9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) | 비상업 연구용 / OpenRAIL++ / Apache 2.0 / FLUX 비상업 |
+| 장면 영상 (선택, 하나 고름) | [Lightricks/LTX-Video](https://huggingface.co/Lightricks/LTX-Video) 2B, [Lightricks/LTX-2.5-Diffusers](https://huggingface.co/Lightricks/LTX-2.5-Diffusers) 22B (4bit/8bit 양자화) | LTX 오픈 가중치 / LTX-2 Community (연 매출 1천만 달러 미만 무료) |
 | 배경음악 (선택) | [facebook/musicgen-small](https://huggingface.co/facebook/musicgen-small) | CC-BY-NC 4.0 |
 
 ## 실행 환경
 
-- **NVIDIA GPU** (VRAM 12GB 이상 권장, RTX 4080 SUPER 16GB에서 테스트)
+- **NVIDIA GPU** (VRAM 12GB 이상 권장, RTX 4080 SUPER 16GB에서 테스트). GPU가 작거나 없으면 사이드바 「💻 계산 장치」에서 **GPU + CPU 함께** 또는 **CPU만**을 고릅니다 (느려짐). 앱 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 이 PC의 GPU·RAM·CPU와 작업별 GPU용·CPU용 추천 모델을 볼 수 있습니다.
 - Python 3.11
 - [Ollama](https://ollama.com) 실행 중 + 비전 모델 설치 (`ollama pull qwen3.5:9b`)
 - Edge TTS를 쓰려면 인터넷 연결
@@ -80,11 +80,39 @@ python -m venv .venv-gen
 
 | 기능 | 모델 | 내려받기 | 걸리는 시간 (RTX 4080 SUPER) | 라이선스 |
 |---|---|---|---|---|
-| 장면 이미지 → 움직임 클립 | [stabilityai/sdxl-turbo](https://huggingface.co/stabilityai/sdxl-turbo) (fp16) | 약 7GB | 장면당 몇 초 | 비상업 연구용 |
-| 장면 영상 (약 4초) | [Lightricks/LTX-Video](https://huggingface.co/Lightricks/LTX-Video) | 약 28GB | 장면당 1분 안팎 | LTX 오픈 가중치 (비상업 무료) |
+| 장면 이미지 → 움직임 클립 | [stabilityai/sdxl-turbo](https://huggingface.co/stabilityai/sdxl-turbo) (fp16, 576×1024) | 약 7GB | 장당 약 2초 | 비상업 연구용 |
+| 〃 | [DreamShaper XL Lightning](https://huggingface.co/Lykon/dreamshaper-xl-lightning) / [v2 Turbo](https://huggingface.co/Lykon/dreamshaper-xl-v2-turbo) (832×1216) | 각 약 7GB | 장당 1.2~1.5초 | OpenRAIL++ |
+| 장면 영상 (약 4초) | [Lightricks/LTX-Video](https://huggingface.co/Lightricks/LTX-Video) 2B | 약 28GB | 장면당 1분 안팎 | LTX 오픈 가중치 (비상업 무료) |
 | 배경음악 (최대 30초) | [facebook/musicgen-small](https://huggingface.co/facebook/musicgen-small) | 약 2GB | 10초 곡에 약 25초 | CC-BY-NC 4.0 |
 
+### LTX-2.5·FLUX.2 설치 (최신 동영상·이미지 모델, 선택)
+
+LTX-2.5와 FLUX.2 [klein]은 아직 diffusers 정식 버전에 없어 개발판이 필요하므로 **또 다른 가상환경**(`.venv-ltx`)을 씁니다.
+LTX-2.5와 FLUX.2 [klein] 9B는 게이트 모델이라 Hugging Face 로그인과 모델 페이지에서 라이선스 동의가 필요합니다 (저장소마다 따로).
+
+```bash
+python -m venv .venv-ltx
+.venv-ltx\Scripts\python -m pip install -r requirements-ltx.txt
+.venv-ltx\Scripts\hf auth login        # Read 토큰 (https://huggingface.co/settings/tokens)
+# https://huggingface.co/Lightricks/LTX-2.5-Diffusers 와 https://huggingface.co/black-forest-labs/FLUX.2-klein-9B 에서 동의
+.venv-ltx\Scripts\python tests\test_ltx25.py nf4     # 확인 (처음에는 약 71GB 내려받기 + 4bit 양자화)
+```
+
+| 기능 | 모델 | 내려받기 | 걸리는 시간 (RTX 4080 SUPER) | 라이선스 |
+|---|---|---|---|---|
+| 장면 영상 (5초, 704×1280) | [LTX-2.5 22B](https://huggingface.co/Lightricks/LTX-2.5-Diffusers) **4bit** | 약 71GB (+ 양자화 저장 18GB) | 장면당 약 1분 15초, GPU 최대 12.3GB | LTX-2 Community |
+| 〃 | LTX-2.5 22B **8bit** (fp8, RAM에 두고 나눠 올림) | 〃 | 장면당 약 10분 | 〃 |
+| 장면 이미지 (768×1344) | [FLUX.2 [klein] 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | 약 16GB | 장당 약 7초 (불러오기 약 30초) | Apache 2.0 |
+| 〃 | [FLUX.2 [klein] 9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) **4bit** | 약 35GB | 장당 약 7초 (처음 양자화 포함 불러오기 약 30초) | FLUX 비상업 |
+
+- **양자화**: 22B·9B 모델은 원본(bf16)이 16GB GPU에 들어가지 않아 bitsandbytes 4bit로 줄여 올립니다. 처음 한 번 양자화해서 `workdir/models/`에 저장하고(LTX-2.5 약 2분), 다음부터는 저장본을 바로 불러옵니다 (약 20초).
+- **LTX-2.5 설정**은 ComfyUI 공식 워크플로를 따릅니다: distilled, 절반 해상도에서 8단계 → 잠재 공간 2배 업스케일 → 3단계, 121프레임 24fps, 가이던스 1.0.
+- 사이드바 「💻 계산 장치」 아래 「AI 이미지 모델」·「AI 동영상 모델」·「LTX-2.5 양자화」에서 고릅니다. 이 설정은 컴퓨터마다 다른 값이라 프리셋이 아니라 `workdir/device.json`에 저장됩니다. 바꾸면 새로 만드는 장면부터 적용됩니다.
+
 생성 전에 Ollama 모델을 GPU에서 내리고(다음 요청 때 다시 올라옴), 결과는 `workdir/gen_cache/`에 저장해 같은 요청은 다시 만들지 않습니다.
+생성 프로세스는 한 번 켜면 모델을 올려 둔 채 다음 장면에 다시 쓰고, 90초 동안 쓰지 않으면 꺼서 GPU 메모리를 돌려줍니다.
+
+**AI 장면 생성 큐**: 카드의 「➕ 큐에 넣기」나 「🎬 AI 장면 N개 모두 큐에 넣기」로 장면을 큐에 넣으면 한 장면씩 차례로 만들어 카드에 미리보기로 붙입니다. 2단계 아래 「AI 장면 생성 큐」에서 대기 중인 장면의 순서를 ⬆⬇로 바꾸거나 🗑로 빼고, 만드는 중인 장면을 ⏹로 취소하고, 실패한 장면을 🔁로 다시 시도하고, ⏸ 일시정지할 수 있습니다. 큐는 `workdir/gen_queue.json`에 저장되어 새로고침이나 앱 재시작 뒤에도 이어서 만듭니다.
 
 ## 사용 방법
 
@@ -93,7 +121,7 @@ python -m venv .venv-gen
 ### ✨ 영상 없이 AI로 만들기
 
 1. 「어떤 쇼츠를 만들까요?」에 주제를 쓰고, 장면 만드는 방식(AI 이미지 + 움직임 / AI 동영상 / 섞기)을 고릅니다.
-2. **1단계 · AI 대본 + 장면 구성**: 장면마다 나레이션과 그림 설명이 카드로 나옵니다. 설명을 고치고 「🎨 만들기」로 장면을 미리 봅니다.
+2. **1단계 · AI 대본 + 장면 구성**: 장면마다 나레이션과 그림 설명이 카드로 나옵니다. 설명을 고치고 「🎬 모두 큐에 넣기」로 장면을 한꺼번에 만듭니다. 시작 화면의 「🤖 사용하는 AI 모델」에서 단계마다 어떤 모델을 쓰는지 볼 수 있습니다.
 3. **3단계**는 아래 영상 모드와 같습니다. AI가 쓴 대본은 사실과 다를 수 있으니 꼭 확인하세요.
 
 ### 📼 영상으로 만들기
@@ -104,7 +132,7 @@ python -m venv .venv-gen
 3. **2단계 · 확인·수정**: 구간마다 카드가 나옵니다. 카드에서 구간을 재생해 보고, 시작·끝 시간과 나레이션을 고치고, ⬆⬇로 순서를 바꾸거나 🗑로 빼고, ➕로 구간을 추가합니다.
    - 🔄 **구성 다시 만들기**: 구간과 나레이션을 처음부터 다시
    - ✍️ **나레이션만 다시 쓰기**: 카드의 구간은 그대로 두고 나레이션만 새로
-   - ✨ **AI 장면 추가**: 원본에 없는 장면을 AI로 만들어 넣습니다. 장면 설명을 한글로 쓰고 「🎨 만들기」로 미리 봅니다 (AI 생성 기능 설치 필요).
+   - ✨ **AI 장면 추가**: 원본에 없는 장면을 AI로 만들어 넣습니다. 장면 설명을 한글로 쓰고 「➕ 큐에 넣기」로 만듭니다 (AI 생성 기능 설치 필요).
 4. **3단계 · 나레이션 + 쇼츠 만들기**: 만든 쇼츠는 「결과 기록」에 최신 순으로 쌓입니다. 설정을 바꿔 여러 번 만들고 나란히 비교한 뒤 마음에 드는 것을 다운로드하세요. 결과마다 설정 요약이 붙습니다. 결과마다 **SRT 자막 파일**과 **썸네일 이미지**(가장 좋은 장면 + 큰 제목)도 함께 만들어져 따로 다운로드할 수 있습니다.
 
 사이드바에서 LLM, 나레이션 말투(정보 전달 / 유쾌한 리뷰 / 감성 스토리), 쇼츠 길이, 목소리, 원본 소리 크기, 세로 변환 방식(블러 배경 / 가운데 크롭 / **피사체 따라 크롭**: 얼굴·눈에 띄는 곳·움직임을 따라 자르는 위치를 옮김), 제목 표시, 자막 스타일(기본 / **단어 강조**: 읽는 낱말을 강조 색으로), 자막 크기·위치·색, **배경음악**(올린 음악이나 **AI로 만든 음악**을 보관함에 넣고 골라 쓰기, 반복·페이드·나레이션 중 줄이기)을 바꿀 수 있습니다. 배경음악은 권리가 있는 음악만 쓰세요.
@@ -151,7 +179,9 @@ shorts_maker/
   reframe.py            피사체 따라 크롭 (얼굴·saliency·움직임)
   extras.py             SRT 자막, 썸네일 이미지
   voices.py             목소리 보관함 (올리기·녹음·가상 목소리)
-  generate.py           AI 장면·음악 생성 (생성 환경을 별도 프로세스로)
+  generate.py           AI 장면·음악 생성 (켜 둔 생성 프로세스에 요청)
+  genqueue.py           AI 장면 생성 큐 (저장, 순서 바꾸기·빼기·취소, 백그라운드 처리)
+  system.py             컴퓨터 사양 확인, 계산 장치(CPU/GPU)별 추천 모델
 gen/
   worker.py             생성 작업 프로세스 (.venv-gen에서 실행)
 ui/

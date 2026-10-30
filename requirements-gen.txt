@@ -19,3 +19,4 @@ numpy<2.0
 pillow>=10.0
 scipy>=1.11
 truststore>=0.10
+hf_xet>=1.1  # 큰 모델 파일을 끊김 없이 내려받기 (없으면 일반 HTTP로 받다가 프로세스가 죽은 적이 있음)

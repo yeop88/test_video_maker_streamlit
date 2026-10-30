@@ -89,6 +89,10 @@ def tidy(text: str) -> str:
     return re.sub(r"(\d)\s+(?=[가-힣])", r"\1", text).strip()
 
 
+MAX_ANSWER_TOKENS = 4096  # 가장 긴 정상 응답(대본·나레이션 묶음)도 2000토큰 안쪽
+DEVICE = "gpu"  # 계산 장치 설정. "cpu"면 Ollama 모델을 GPU에 올리지 않는다 (gpu·hybrid는 Ollama가 알아서 나눔)
+
+
 def list_models() -> list[str]:
     return sorted(m.model for m in ollama.list().models)
 
@@ -98,7 +102,10 @@ def _chat(model: str, messages: list[dict], schema: type[BaseModel], keep_alive:
         model=model,
         messages=messages,
         format=schema.model_json_schema(),
-        options={"temperature": temperature},
+        # num_predict: 같은 내용을 끝없이 되풀이하는 응답을 끊는다. 상한이 없을 때 쇼츠 여러 편 나누기 응답 하나가
+        # 문맥 한도(131072 토큰)까지 26분 동안 이어진 적이 있다. 잘린 응답은 JSON이 깨져 None → 다시 요청한다.
+        options={"temperature": temperature, "num_predict": MAX_ANSWER_TOKENS,
+                 **({"num_gpu": 0} if DEVICE == "cpu" else {})},
         keep_alive=keep_alive,
     )
     try:

@@ -1,5 +1,12 @@
-"""AI 생성: 장면 이미지·영상 클립, 배경음악. 실제 생성은 gen/worker.py를 생성 전용 가상환경(.venv-gen)에서 돌린다.
+"""AI 생성: 장면 이미지·영상 클립, 배경음악. 실제 생성은 gen/worker.py를 생성 전용 가상환경에서 돌린다.
 
+- .venv-gen: SDXL 계열 이미지(SDXL-Turbo, DreamShaper XL), LTX-Video 2B(동영상), MusicGen(음악)
+- .venv-ltx: LTX-2.5 22B(동영상, 4bit/8bit 양자화), FLUX.2 [klein](이미지). diffusers 개발판과 최신 transformers가
+  필요해서 따로 둔다.
+
+생성 프로세스는 한 번 띄우면 모델을 올려 둔 채 요청을 하나씩 받는다 (GenService). 장면마다 프로세스를 새로
+띄우면 LTX-Video를 불러오는 데만 장면마다 20초 넘게 걸렸다. 한동안 쓰지 않으면 끄고 GPU 메모리를 돌려준다.
+두 환경의 프로세스는 GPU를 함께 쓰지 않게 하나가 일할 때 다른 하나를 끈다 (GPU_LOCK).
 결과는 workdir/gen_cache/에 (종류, 프롬프트, 시드, 설정) 해시 이름으로 저장해서 같은 요청은 다시 만들지 않는다.
 """
 from __future__ import annotations
@@ -7,48 +14,202 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
 import subprocess
-import sys
+import threading
+import time
 from pathlib import Path
 from typing import Callable
 
 from . import config, media
 
-GEN_DIR = config.ROOT / ".venv-gen"
-GEN_PYTHON = GEN_DIR / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 WORKER = config.ROOT / "gen" / "worker.py"
 
-# 장면 생성 방식
-ENGINES = {
-    "image": "AI 이미지 + 움직임 (빠름, 장면당 몇 초)",
-    "video": "AI 동영상 (LTX-Video, 장면당 1분 안팎)",
+
+def _python(venv: str) -> Path:
+    return config.ROOT / venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+GEN_PYTHON = _python(".venv-gen")
+LTX_PYTHON = _python(".venv-ltx")
+LTX_REPO = "Lightricks/LTX-2.5-Diffusers"
+
+# AI 이미지 모델. env: 어느 생성 환경에서 돌리는지, size: 세로 이미지 크기 (모델이 잘 그리는 해상도),
+# steps·guidance·scheduler: 모델 카드 권장값, quant: 16GB GPU에 맞추려고 양자화하는지, gated: 라이선스 동의 필요.
+IMAGE_MODELS = {
+    "sdxl_turbo": {"name": "SDXL-Turbo", "repo": "stabilityai/sdxl-turbo", "by": "Stability AI", "env": "gen",
+                   "size": (576, 1024), "steps": 4, "guidance": 0.0, "license": "비상업 연구용",
+                   "label": "SDXL-Turbo (가장 빠름, 화질 보통)", "speed": "장면당 몇 초", "download": "약 7GB"},
+    "dreamshaper_lightning": {
+        "name": "DreamShaper XL Lightning", "repo": "Lykon/dreamshaper-xl-lightning", "by": "Lykon", "env": "gen",
+        "size": (832, 1216), "steps": 4, "guidance": 2.0, "scheduler": "dpm", "license": "OpenRAIL++",
+        "label": "DreamShaper XL Lightning (빠름, 사진·일러스트 모두 좋음)", "speed": "장면당 몇 초", "download": "약 7GB"},
+    "dreamshaper_turbo": {
+        "name": "DreamShaper XL v2 Turbo", "repo": "Lykon/dreamshaper-xl-v2-turbo", "by": "Lykon", "env": "gen",
+        "size": (832, 1216), "steps": 6, "guidance": 2.0, "scheduler": "dpm", "license": "OpenRAIL++",
+        "label": "DreamShaper XL v2 Turbo (빠름, 디테일 조금 더)", "speed": "장면당 몇 초", "download": "약 7GB"},
+    "flux2_klein_4b": {
+        "name": "FLUX.2 [klein] 4B", "repo": "black-forest-labs/FLUX.2-klein-4B", "by": "Black Forest Labs", "env": "ltx",
+        "size": (768, 1344), "steps": 4, "guidance": 1.0, "license": "Apache 2.0",
+        "label": "FLUX.2 [klein] 4B (최신, 프롬프트를 잘 따름)", "speed": "장면당 10초 안팎", "download": "약 16GB"},
+    "flux2_klein_9b": {
+        "name": "FLUX.2 [klein] 9B (4bit)", "repo": "black-forest-labs/FLUX.2-klein-9B", "by": "Black Forest Labs",
+        "env": "ltx", "size": (768, 1344), "steps": 4, "guidance": 1.0, "quant": "nf4", "gated": True,
+        "license": "FLUX 비상업 라이선스",
+        "label": "FLUX.2 [klein] 9B 4bit (최고 화질, 비상업용)", "speed": "장면당 20초 안팎", "download": "약 35GB"},
 }
+
+# 화면에 보여 줄 모델 정보 (어떤 AI가 무엇을 만드는지). "video"는 동영상 모델 설정에 따라 바뀐다 (set_video_model).
+VIDEO_MODEL_INFO = {
+    "ltx2b": {"name": "LTX-Video (2B)", "repo": "Lightricks/LTX-Video", "by": "Lightricks",
+              "what": "약 4초 세로 동영상 (512×768, 24fps)", "speed": "장면당 1분 안팎"},
+    "ltx25": {"name": "LTX-2.5 (22B)", "repo": LTX_REPO, "by": "Lightricks",
+              "what": "약 5초 세로 동영상 (704×1280, 24fps, 2단계 생성)", "speed": "장면당 약 1분 15초 (4bit)"},
+}
+VIDEO_MODELS = {"ltx2b": "LTX-Video 2B (가벼움, 화질 낮음)", "ltx25": "LTX-2.5 22B (양자화, 화질 좋음, 느림)"}
+LTX_QUANTS = {
+    "nf4": "4bit (NF4, 추천) — GPU 약 12GB, 장면당 약 1분 15초",
+    "fp8": "8bit (fp8) — RAM에 두고 나눠 올림, 장면당 약 10분 (RAM 64GB 이상)",
+}
+MODEL_INFO = {
+    "image": {},
+    "video": dict(VIDEO_MODEL_INFO["ltx2b"]),
+    "music": {"name": "MusicGen small", "repo": "facebook/musicgen-small", "by": "Meta",
+              "what": "최대 30초 배경음악 (가사 없음)", "speed": "20초 곡에 약 40초"},
+}
+ENGINES: dict[str, str] = {}
 IMAGE_SIZE = (576, 1024)  # SDXL-Turbo 세로 이미지
-VIDEO_SIZE = (512, 768)  # LTX-Video 세로 영상 (32의 배수)
-VIDEO_FRAMES, VIDEO_FPS = 97, 24  # 약 4초
+VIDEO_SIZE = (512, 768)  # LTX-Video 2B 세로 영상 (32의 배수)
+VIDEO_FRAMES, VIDEO_FPS, VIDEO_STEPS = 97, 24, 30  # 약 4초
+LTX25_SIZE = (704, 1280)  # LTX-2.5 최종 해상도 (1단계는 절반 352×640). ComfyUI 워크플로의 1280×720을 세로로
+LTX25_FRAMES = 121  # 24fps 5초 (8의 배수 + 1)
+LTX25_NEGATIVE = "pc game, console game, video game, cartoon, childish, ugly"  # ComfyUI 워크플로 값
 STYLE_SUFFIX = "vertical composition, cinematic, high detail, natural light"
 NEGATIVE = "text, watermark, logo, letters, low quality, blurry, deformed"
+IDLE_STOP_SEC = 90  # 이만큼 쓰지 않으면 생성 프로세스를 끄고 GPU 메모리를 돌려준다
+LTX_IDLE_STOP_SEC = 600  # LTX-2.5는 불러오는 데 오래 걸려서 더 오래 켜 둔다
 
-_available: tuple[bool, str] | None = None
+settings = {"video_model": "ltx2b", "ltx_quant": "nf4", "image_model": "sdxl_turbo"}
 Progress = Callable[[int, int], None]
+
+
+def _refresh_labels() -> None:
+    image = IMAGE_MODELS[settings["image_model"]]
+    MODEL_INFO["image"] = {"name": image["name"], "repo": image["repo"], "by": image["by"], "speed": image["speed"],
+                           "what": f"세로 이미지 1장({image['size'][0]}×{image['size'][1]}) → 천천히 확대·이동하는 클립"}
+    info = dict(VIDEO_MODEL_INFO[settings["video_model"]])
+    if settings["video_model"] == "ltx25":
+        info["name"] = f"LTX-2.5 (22B, {'4bit' if settings['ltx_quant'] == 'nf4' else '8bit'})"
+    MODEL_INFO["video"] = info
+    ENGINES.clear()
+    ENGINES["image"] = f"AI 이미지 + 움직임 — {MODEL_INFO['image']['name']} (빠름)"
+    ENGINES["video"] = f"AI 동영상 — {MODEL_INFO['video']['name']} (느림)"
+
+
+_refresh_labels()
+
+
+def set_video_model(model: str, quant: str) -> None:
+    """AI 동영상에 쓸 모델("ltx2b" | "ltx25")과 LTX-2.5 양자화("nf4" | "fp8")."""
+    settings.update(video_model=model if model in VIDEO_MODEL_INFO else "ltx2b",
+                    ltx_quant=quant if quant in LTX_QUANTS else "nf4")
+    _refresh_labels()
+
+
+def set_image_model(model: str) -> None:
+    """AI 이미지에 쓸 모델 (IMAGE_MODELS의 키)."""
+    settings["image_model"] = model if model in IMAGE_MODELS else "sdxl_turbo"
+    _refresh_labels()
+
+
+def model_label(kind: str) -> str:
+    info = MODEL_INFO[kind]
+    return f"{info['name']} ({info['by']}, `{info['repo']}`)"
+
+
+_probe: tuple[bool, bool] | None = None  # (생성 환경을 불러올 수 있음, GPU 있음)
 
 
 def available() -> tuple[bool, str]:
     """(쓸 수 있는지, 안내 문구). 생성 환경이 없으면 설치 방법을 알려 준다."""
-    global _available
-    if _available is None:
-        if not GEN_PYTHON.exists():
-            _available = (False, "AI 생성 환경이 없습니다. README의 「AI 생성 기능 설치」대로 .venv-gen을 만드세요.")
+    global _probe
+    if not GEN_PYTHON.exists():
+        return False, "AI 생성 환경이 없습니다. README의 「AI 생성 기능 설치」대로 .venv-gen을 만드세요."
+    if _probe is None:
+        proc = subprocess.run([str(GEN_PYTHON), "-c", "import torch, diffusers, transformers; print(torch.cuda.is_available())"],
+                              capture_output=True, text=True)
+        _probe = (proc.returncode == 0, proc.stdout.strip() == "True")
+    loads, has_gpu = _probe
+    if not loads:
+        return False, "AI 생성 환경(.venv-gen)을 불러오지 못했습니다."
+    if service.device != "cpu" and not has_gpu:
+        return False, "생성 환경에서 GPU를 찾지 못했습니다. 사이드바 「계산 장치」를 「CPU만」으로 바꾸면 (느리지만) 쓸 수 있습니다."
+    return True, ""
+
+
+_gated_checked: dict[str, tuple[float, bool, str]] = {}
+
+
+def gated_status(repo: str, refresh: bool = False) -> tuple[bool, str]:
+    """.venv-ltx 환경과, 게이트 저장소(라이선스 동의가 필요한 모델)에 접근할 수 있는지.
+    성공은 계속 기억하고, 실패는 30초 뒤에 다시 확인한다 (로그인·동의를 마치면 곧 반영되게)."""
+    if not LTX_PYTHON.exists():
+        return False, "최신 생성 환경이 없습니다. README의 「LTX-2.5·FLUX.2 설치」대로 .venv-ltx를 만드세요."
+    checked = _gated_checked.get(repo)
+    if checked and not refresh and (checked[1] or time.time() - checked[0] < 30):
+        return checked[1], checked[2]
+    page = f"https://huggingface.co/{repo}"
+    try:
+        from huggingface_hub import auth_check, get_token
+
+        if not get_token():
+            ok, msg = False, ("Hugging Face에 로그인되어 있지 않습니다. 터미널에서 `.venv-ltx\\Scripts\\hf auth login`으로 "
+                              f"로그인하고, {page} 에서 라이선스에 동의하세요.")
         else:
-            proc = subprocess.run([str(GEN_PYTHON), "-c", "import torch, diffusers, transformers; print(torch.cuda.is_available())"],
-                                  capture_output=True, text=True)
-            ok = proc.returncode == 0 and proc.stdout.strip() == "True"
-            _available = (ok, "" if ok else "AI 생성 환경(.venv-gen)을 불러오지 못했거나 GPU를 찾지 못했습니다.")
-    return _available
+            auth_check(repo)
+            ok, msg = True, ""
+    except Exception as e:  # 동의하지 않았거나(GatedRepoError) 인터넷이 안 됨
+        name = type(e).__name__
+        ok, msg = False, (f"{page} 에서 라이선스에 동의해야 합니다 (게이트 모델)." if "Gated" in name
+                          else f"{repo} 저장소를 확인하지 못했습니다: {name}")
+    _gated_checked[repo] = (time.time(), ok, msg)
+    return ok, msg
+
+
+def ltx_status(refresh: bool = False) -> tuple[bool, str]:
+    return gated_status(LTX_REPO, refresh)
+
+
+def image_available() -> tuple[bool, str]:
+    """지금 고른 이미지 모델을 쓸 수 있는지."""
+    model = IMAGE_MODELS[settings["image_model"]]
+    if model["env"] == "gen":
+        return available()
+    if model.get("gated"):
+        return gated_status(model["repo"])
+    if not LTX_PYTHON.exists():
+        return False, "최신 생성 환경이 없습니다. README의 「LTX-2.5·FLUX.2 설치」대로 .venv-ltx를 만드세요."
+    return True, ""
+
+
+def video_available() -> tuple[bool, str]:
+    """지금 고른 동영상 모델을 쓸 수 있는지."""
+    return ltx_status() if settings["video_model"] == "ltx25" else available()
+
+
+def scene_available(engine: str) -> tuple[bool, str]:
+    return video_available() if engine == "video" else image_available()
 
 
 def cache_dir() -> Path:
     folder = config.WORK_DIR / "gen_cache"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def models_dir() -> Path:
+    """양자화해서 저장한 모델 (LTX-2.5 4bit 등)."""
+    folder = config.WORK_DIR / "models"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
@@ -74,25 +235,229 @@ def _free_gpu() -> None:
         pass
 
 
-def run_worker(kind: str, tasks: list[dict], on_progress: Progress | None = None) -> None:
-    ok, message = available()
-    if not ok:
-        raise RuntimeError(message)
-    _free_gpu()
-    spec = cache_dir() / f"job_{kind}_{_key(json.dumps(tasks, ensure_ascii=False))}.json"
-    spec.write_text(json.dumps({"kind": kind, "tasks": tasks}, ensure_ascii=False), encoding="utf-8")
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    proc = subprocess.Popen([str(GEN_PYTHON), str(WORKER), str(spec)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", env=env, cwd=config.ROOT)
-    for line in proc.stdout:  # "PROGRESS 2 5"
-        parts = line.split()
-        if len(parts) == 3 and parts[0] == "PROGRESS" and on_progress:
-            on_progress(int(parts[1]), int(parts[2]))
-    err = proc.stderr.read()
-    proc.wait()
-    spec.unlink(missing_ok=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"AI 생성({kind}) 실패:\n{err[-2500:]}")
+class Cancelled(RuntimeError):
+    pass
+
+
+GPU_LOCK = threading.Lock()  # 생성 프로세스들이 한 번에 하나만 GPU를 쓰게
+
+
+class GenService:
+    """켜 둔 생성 프로세스 하나. 요청은 한 번에 하나씩 (GPU_LOCK), 다른 스레드에서 cancel()로 지금 작업을 멈출 수 있다."""
+
+    def __init__(self, name: str, python: Path, kinds: set[str]):
+        self.name, self.python, self.kinds = name, python, kinds
+        self.lock = GPU_LOCK
+        self.proc: subprocess.Popen | None = None
+        self.events: queue.Queue = queue.Queue()
+        self.last_used = 0.0
+        self.loaded_kind: str | None = None
+        self.current_id: str | None = None
+        self._cancelled = False
+        self.device = "gpu"  # 계산 장치 설정 ("gpu" | "hybrid" | "cpu"), 프로세스를 켤 때 넘긴다
+        self.proc_args: list[str] = []
+
+    def set_device(self, device: str) -> None:
+        """계산 장치를 바꾼다. 켜 둔 프로세스는 다음 작업 때 새 설정으로 다시 켠다."""
+        self.device = device
+
+    def args(self) -> list[str]:
+        if self.name == "ltx":
+            return ["--quant", settings["ltx_quant"], "--models-dir", str(models_dir())]
+        return ["--device", self.device]
+
+    def _start(self) -> None:
+        ok, message = ((True, "") if LTX_PYTHON.exists() else (False, "최신 생성 환경(.venv-ltx)이 없습니다.")) \
+            if self.name == "ltx" else available()
+        if not ok:
+            raise RuntimeError(message)
+        _free_gpu()
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        self.proc_args = self.args()
+        self.proc = subprocess.Popen(
+            [str(self.python), str(WORKER), "--serve", *self.proc_args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", env=env, cwd=config.ROOT,
+        )
+        self.events = queue.Queue()
+        self.loaded_kind = None
+        threading.Thread(target=self._read, args=(self.proc, self.events), daemon=True).start()
+        event = self._wait(timeout=120)
+        if event.get("event") != "ready":
+            raise RuntimeError("AI 생성 프로세스를 시작하지 못했습니다.")
+
+    @staticmethod
+    def _read(proc: subprocess.Popen, events: queue.Queue) -> None:
+        for line in proc.stdout:
+            if line.startswith("@@"):
+                try:
+                    events.put(json.loads(line[2:]))
+                except json.JSONDecodeError:
+                    pass
+        events.put({"event": "exit"})
+
+    def _wait(self, timeout: float | None = None) -> dict:
+        try:
+            return self.events.get(timeout=timeout)
+        except queue.Empty:
+            return {"event": "timeout"}
+
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def _shutdown(self) -> None:
+        """(GPU_LOCK을 잡은 상태에서) 프로세스를 끄고 GPU 메모리를 돌려준다."""
+        if self.alive():
+            try:
+                self.proc.stdin.close()
+                self.proc.wait(timeout=30)
+            except Exception:
+                self.proc.kill()
+        self.proc = None
+
+    def run(self, kind: str, task: dict, request_id: str = "", on_step: Progress | None = None,
+            on_loading: Callable[[str], None] | None = None) -> None:
+        """작업 하나를 끝날 때까지 실행한다. 실패하면 RuntimeError, cancel()로 멈추면 Cancelled."""
+        with self.lock:
+            for other in SERVICES:  # 다른 생성 환경이 GPU에 모델을 올려 두고 있으면 끈다
+                if other is not self:
+                    other._shutdown()
+            if self.alive() and self.proc_args != self.args():  # 계산 장치·양자화 설정을 바꿨으면 다시 켬
+                self.proc.kill()
+                self.proc.wait()
+            if not self.alive():
+                self._start()
+            request_id = request_id or _key(kind, json.dumps(task, ensure_ascii=False), time.time())
+            self.current_id, self._cancelled = request_id, False
+            try:
+                self.proc.stdin.write(json.dumps({"id": request_id, "kind": kind, "task": task}, ensure_ascii=False) + "\n")
+                self.proc.stdin.flush()
+                while True:
+                    event = self._wait()
+                    if event.get("event") == "exit":
+                        self.proc = None
+                        if self._cancelled:
+                            raise Cancelled("취소했습니다.")
+                        raise RuntimeError("AI 생성 프로세스가 중간에 종료되었습니다 (GPU·RAM 메모리 부족일 수 있음).")
+                    if event.get("id") not in (request_id, None):
+                        continue
+                    if event["event"] == "loading" and on_loading:
+                        on_loading(event.get("model", ""))
+                    elif event["event"] == "step" and on_step:
+                        on_step(event["step"], event["total"])
+                    elif event["event"] == "done":
+                        self.loaded_kind = kind
+                        return
+                    elif event["event"] == "error":
+                        raise RuntimeError(f"AI 생성({kind}) 실패:\n{event.get('error', '')}")
+            finally:
+                self.current_id = None
+                self.last_used = time.time()
+
+    def cancel(self) -> None:
+        """지금 만드는 작업을 멈춘다 (프로세스를 끄므로 다음 작업 때 모델을 다시 불러옴)."""
+        if self.alive():
+            self._cancelled = True
+            self.proc.kill()
+
+    def stop_if_idle(self, idle_sec: float = IDLE_STOP_SEC) -> bool:
+        """한동안 쓰지 않았으면 끄고 GPU 메모리를 돌려준다."""
+        if self.alive() and self.current_id is None and time.time() - self.last_used > idle_sec:
+            if self.lock.acquire(blocking=False):
+                try:
+                    self._shutdown()
+                finally:
+                    self.lock.release()
+                return True
+        return False
+
+
+service = GenService("gen", GEN_PYTHON, {"image", "video", "music"})
+ltx_service = GenService("ltx", LTX_PYTHON, {"ltx25", "flux2"})
+SERVICES = [service, ltx_service]
+
+
+def service_for(kind: str) -> GenService:
+    return ltx_service if kind in ltx_service.kinds else service
+
+
+def run_job(kind: str, task: dict, **kwargs) -> None:
+    service_for(kind).run(kind, task, **kwargs)
+
+
+def cancel() -> None:
+    """지금 만드는 작업을 멈춘다."""
+    for s in SERVICES:
+        if s.current_id is not None:
+            s.cancel()
+
+
+def stop_idle() -> None:
+    service.stop_if_idle(IDLE_STOP_SEC)
+    ltx_service.stop_if_idle(LTX_IDLE_STOP_SEC)
+
+
+def set_device(device: str) -> None:
+    service.set_device(device)
+
+
+# ───────────────────────── 장면 ─────────────────────────
+
+
+def scene_job(scene: dict) -> tuple[str, dict, Path]:
+    """장면 {prompt, engine, seed, seconds} → (종류, 생성 작업, 생성 결과 파일). 결과 파일 이름은 요청 내용의 해시.
+    AI 동영상은 그때의 동영상 모델 설정(LTX-Video 2B / LTX-2.5)을 따른다."""
+    prompt = f"{scene['prompt'].strip()}, {STYLE_SUFFIX}"
+    seed = int(scene.get("seed", 0))
+    if scene.get("engine", "image") == "video" and settings["video_model"] == "ltx25":
+        quant = settings["ltx_quant"]
+        out = cache_dir() / f"ltx25_{_key('ltx25', quant, prompt, seed, LTX25_SIZE, LTX25_FRAMES)}.mp4"
+        return "ltx25", {"prompt": prompt, "negative": LTX25_NEGATIVE, "seed": seed, "width": LTX25_SIZE[0],
+                         "height": LTX25_SIZE[1], "frames": LTX25_FRAMES, "fps": VIDEO_FPS, "out": str(out)}, out
+    if scene.get("engine", "image") == "video":
+        out = cache_dir() / f"vid_{_key('video', prompt, seed, VIDEO_SIZE, VIDEO_FRAMES)}.mp4"
+        return "video", {"prompt": prompt, "negative": NEGATIVE, "seed": seed, "width": VIDEO_SIZE[0],
+                         "height": VIDEO_SIZE[1], "frames": VIDEO_FRAMES, "fps": VIDEO_FPS,
+                         "steps": VIDEO_STEPS, "out": str(out)}, out
+    model_id = settings["image_model"]
+    model = IMAGE_MODELS[model_id]
+    w, h = model["size"]
+    # SDXL-Turbo는 예전 캐시 이름을 그대로 쓴다 (이미 만든 장면을 다시 만들지 않게)
+    key = _key("image", prompt, seed, IMAGE_SIZE) if model_id == "sdxl_turbo" else _key("image", model_id, prompt, seed)
+    out = cache_dir() / f"img_{key}.png"
+    task = {"model": model["repo"], "prompt": prompt, "seed": seed, "width": w, "height": h,
+            "steps": model["steps"], "guidance": model["guidance"], "out": str(out)}
+    if model["env"] == "ltx":
+        return "flux2", {**task, "quant": model.get("quant", "")}, out
+    return "image", {**task, "negative": NEGATIVE, "scheduler": model.get("scheduler", "")}, out
+
+
+def scene_clip_path(scene: dict) -> Path:
+    """장면의 최종 클립 경로 (이미지는 길이별 움직임 클립, 영상은 생성 결과 그대로)."""
+    kind, _, out = scene_job(scene)
+    if kind not in ("image", "flux2"):
+        return out
+    seconds = round(float(scene.get("seconds", 5.0)), 1)
+    return out.with_name(f"{out.stem}_{seconds}s_m{int(scene.get('seed', 0)) % 6}.mp4")
+
+
+def cached_clip(scene: dict) -> Path | None:
+    """이미 만들어 둔 장면 클립 (없으면 None)."""
+    clip = scene_clip_path(scene)
+    if clip.exists():
+        return clip
+    kind, _, out = scene_job(scene)
+    if kind in ("image", "flux2") and out.exists():  # 이미지는 있는데 이 길이의 움직임 클립이 없으면 바로 만든다
+        return finish_scene(scene)
+    return None
+
+
+def finish_scene(scene: dict) -> Path:
+    """생성 결과를 장면 클립으로 (이미지는 seconds 길이 움직임 클립)."""
+    kind, _, out = scene_job(scene)
+    clip = scene_clip_path(scene)
+    if kind in ("image", "flux2") and not clip.exists():
+        image_to_clip(out, round(float(scene.get("seconds", 5.0)), 1), clip, motion=int(scene.get("seed", 0)))
+    return clip
 
 
 def image_to_clip(image: Path, seconds: float, out: Path, motion: int = 0) -> None:
@@ -110,46 +475,16 @@ def image_to_clip(image: Path, seconds: float, out: Path, motion: int = 0) -> No
 
 
 def scene_clips(scenes: list[dict], on_progress: Progress | None = None) -> list[Path]:
-    """scenes: [{prompt, engine("image"|"video"), seed, seconds}] → 장면마다 영상 클립 경로 (캐시 사용).
-    image는 이미지 한 장을 seconds 길이 움직임 클립으로, video는 약 4초 클립 그대로 (길이 맞춤은 렌더링 때)."""
-    folder = cache_dir()
-    outs, todo = [], {"image": [], "video": []}
-    for s in scenes:
-        prompt = f"{s['prompt'].strip()}, {STYLE_SUFFIX}"
-        engine = s.get("engine", "image")
-        if engine == "video":
-            out = folder / f"vid_{_key('video', prompt, s.get('seed', 0), VIDEO_SIZE, VIDEO_FRAMES)}.mp4"
-            if not out.exists():
-                todo["video"].append({"prompt": prompt, "negative": NEGATIVE, "seed": s.get("seed", 0),
-                                      "width": VIDEO_SIZE[0], "height": VIDEO_SIZE[1], "frames": VIDEO_FRAMES,
-                                      "fps": VIDEO_FPS, "out": str(out)})
-        else:
-            out = folder / f"img_{_key('image', prompt, s.get('seed', 0), IMAGE_SIZE)}.png"
-            if not out.exists():
-                todo["image"].append({"prompt": prompt, "negative": NEGATIVE, "seed": s.get("seed", 0),
-                                      "width": IMAGE_SIZE[0], "height": IMAGE_SIZE[1], "out": str(out)})
-        outs.append(out)
-    total = sum(len(v) for v in todo.values())
-    done = 0
-
-    def step(d: int, n: int) -> None:
+    """scenes: [{prompt, engine("image"|"video"), seed, seconds}] → 장면마다 영상 클립 경로.
+    이미 만든 장면(큐에서 먼저 만든 것 포함)은 다시 만들지 않는다."""
+    todo = [s for s in scenes if cached_clip(s) is None]
+    for i, scene in enumerate(todo):
+        kind, task, out = scene_job(scene)
+        if not out.exists():
+            run_job(kind, task)
         if on_progress:
-            on_progress(done + d, total)
-
-    for kind in ("image", "video"):
-        if todo[kind]:
-            run_worker(kind, todo[kind], step)
-            done += len(todo[kind])
-    clips = []
-    for s, out in zip(scenes, outs):  # 이미지는 움직임 클립으로 바꾼다 (길이별로 캐시)
-        if out.suffix == ".png":
-            seconds = round(float(s.get("seconds", 5.0)), 1)
-            clip = out.with_name(f"{out.stem}_{seconds}s_m{s.get('seed', 0) % 6}.mp4")
-            if not clip.exists():
-                image_to_clip(out, seconds, clip, motion=s.get("seed", 0))
-            out = clip
-        clips.append(out)
-    return clips
+            on_progress(i + 1, len(todo))
+    return [finish_scene(s) for s in scenes]
 
 
 def music(prompt: str, seconds: float, on_progress: Progress | None = None) -> Path:
@@ -157,18 +492,7 @@ def music(prompt: str, seconds: float, on_progress: Progress | None = None) -> P
     seconds = min(30.0, max(5.0, seconds))
     out = cache_dir() / f"music_{_key('music', prompt, seconds)}.wav"
     if not out.exists():
-        run_worker("music", [{"prompt": prompt, "seconds": seconds, "out": str(out)}], on_progress)
+        run_job("music", {"prompt": prompt, "seconds": seconds, "out": str(out)})
+        if on_progress:
+            on_progress(1, 1)
     return out
-
-
-def scene_thumbnail(clip: Path) -> Path:
-    """카드에 보여 줄 장면 첫 화면 JPG."""
-    thumb = clip.with_suffix(".jpg")
-    if not thumb.exists():
-        media.run_ffmpeg(["-ss", "0.5", "-i", str(clip), "-frames:v", "1", "-vf", "scale=270:-2", str(thumb)])
-    return thumb
-
-
-if __name__ == "__main__":  # 빠른 확인: python -m shorts_maker.generate "프롬프트"
-    print(available())
-    print(scene_clips([{"prompt": sys.argv[1] if len(sys.argv) > 1 else "a calm lake at sunrise", "seconds": 4}]))

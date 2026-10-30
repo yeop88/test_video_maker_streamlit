@@ -1,0 +1,23 @@
+# LTX-2.5 동영상 생성 전용 가상환경(.venv-ltx)용 패키지. 앱(.venv)·다른 생성 모델(.venv-gen)과 따로 설치한다.
+# LTX-2.5는 아직 diffusers 정식 버전에 없어 개발판(main)이 필요하고, 텍스트 인코더(Gemma 4)는 최신 transformers가 필요하다.
+# .venv-gen(SDXL-Turbo, LTX-Video 2B, MusicGen)을 건드리지 않으려고 환경을 나눴다.
+#
+# 설치:
+#   python -m venv .venv-ltx
+#   .venv-ltx\Scripts\python -m pip install -r requirements-ltx.txt
+# 모델은 Hugging Face 로그인과 라이선스 동의가 필요하다 (README 「LTX-2.5 설치」).
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+diffusers @ git+https://github.com/huggingface/diffusers
+transformers>=5.5
+accelerate>=1.10
+bitsandbytes>=0.48  # 4bit(NF4)·8bit 양자화
+sentencepiece>=0.2
+protobuf>=4.25
+safetensors>=0.4
+av>=12  # diffusers.utils.encode_video (영상 + 소리)
+imageio>=2.34
+imageio-ffmpeg>=0.5
+pillow>=10.0
+truststore>=0.10
+huggingface_hub>=0.34

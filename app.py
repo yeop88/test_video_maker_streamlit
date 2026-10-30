@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import shorts_maker
-from shorts_maker import config, generate, llm, media, music, pipeline, presets, project, tts, voices
+from shorts_maker import config, generate, genqueue, llm, media, music, pipeline, presets, project, system, tts, voices
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -26,15 +26,20 @@ UI_DIR = Path(__file__).parent / "ui"
 
 
 @st.cache_resource(show_spinner="Whisper 모델을 불러오는 중... (처음 한 번은 다운로드로 몇 분 걸립니다)")
-def get_whisper():
+def get_whisper(device: str):
     from shorts_maker import asr
 
-    return asr.load_whisper()
+    return asr.load_whisper(device)
 
 
 @st.cache_resource(show_spinner="Chatterbox 모델을 불러오는 중... (처음 한 번은 다운로드로 몇 분 걸립니다)")
-def get_chatterbox():
-    return tts.load_chatterbox()
+def get_chatterbox(device: str):
+    return tts.load_chatterbox(device)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_specs() -> system.Specs:
+    return system.specs()
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -57,6 +62,31 @@ for key, value in presets.DEFAULTS.items():
     ss[key] = ss[key] if key in ss else value
 if models and ss.llm_model not in models:
     ss.llm_model = config.DEFAULT_OLLAMA_MODEL if config.DEFAULT_OLLAMA_MODEL in models else models[0]
+specs = get_specs()
+machine = system.load_machine(specs)  # 계산 장치·동영상 모델·양자화 (프리셋에는 넣지 않고 이 컴퓨터에 저장)
+for key in ("device", "video_model", "ltx_quant", "image_model"):
+    ss[key] = ss[key] if key in ss else machine[key]
+llm.DEVICE = ss.device
+generate.set_device(ss.device)
+generate.set_video_model(ss.video_model, ss.ltx_quant)
+generate.set_image_model(ss.image_model)
+
+
+def change_device() -> None:
+    """계산 장치를 바꾸면 저장하고, 다른 장치에 올려 둔 Whisper·Chatterbox를 내린다."""
+    system.save_machine(device=ss.device)
+    get_whisper.clear()
+    get_chatterbox.clear()
+    llm.DEVICE = ss.device
+    generate.set_device(ss.device)
+    ss.preset_msg = ("info", f"계산 장치: {system.DEVICES[ss.device]}. 모델은 다음에 쓸 때 이 장치로 다시 불러옵니다.")
+
+
+def change_video_model() -> None:
+    """AI 동영상 모델·양자화를 바꾸면 저장한다. 이미 만든 장면은 그대로 두고 새로 만드는 장면부터 적용된다."""
+    system.save_machine(video_model=ss.video_model, ltx_quant=ss.ltx_quant, image_model=ss.image_model)
+    generate.set_video_model(ss.video_model, ss.ltx_quant)
+    generate.set_image_model(ss.image_model)
 
 
 def current_settings() -> dict:
@@ -182,6 +212,34 @@ with st.sidebar:
     if msg:
         getattr(st, msg[0])(msg[1])
 
+    st.subheader("💻 계산 장치")
+    st.radio("계산 장치", list(system.DEVICES), format_func=system.DEVICES.get, key="device", on_change=change_device,
+             label_visibility="collapsed", help=system.DEVICE_HELP)
+    suggested = system.suggested_device(specs)
+    if ss.device != suggested:
+        st.caption(f"이 컴퓨터 추천: {system.DEVICES[suggested]}")
+    st.radio("AI 이미지 모델", list(generate.IMAGE_MODELS), format_func=lambda k: generate.IMAGE_MODELS[k]["label"],
+             key="image_model", on_change=change_video_model,
+             help="AI 장면을 「AI 이미지 + 움직임」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다. "
+                  "처음 쓰는 모델은 내려받느라 오래 걸립니다 (아래 「💻 컴퓨터 사양과 추천 모델」에 크기·라이선스).")
+    image_ok, image_msg = generate.image_available()
+    if not image_ok:
+        st.warning(image_msg)
+    st.radio("AI 동영상 모델", list(generate.VIDEO_MODELS), format_func=generate.VIDEO_MODELS.get, key="video_model",
+             on_change=change_video_model,
+             help="AI 장면을 「AI 동영상」으로 만들 때 쓰는 모델입니다. 바꾸면 새로 만드는 장면부터 적용됩니다.")
+    if ss.video_model == "ltx25":
+        st.radio("LTX-2.5 양자화", list(generate.LTX_QUANTS), format_func=generate.LTX_QUANTS.get, key="ltx_quant",
+                 on_change=change_video_model,
+                 help="22B 모델은 원본(bf16 42GB)이 16GB GPU에 들어가지 않아 줄여서 올립니다. "
+                      "처음 쓸 때 약 71GB를 내려받고 4bit로 양자화해 workdir/models에 저장합니다 (다음부터는 바로 불러옴).")
+        ltx_ok, ltx_msg = generate.ltx_status()
+        if not ltx_ok:
+            st.warning(ltx_msg)
+    if ss.device != "cpu" and not specs.gpus:
+        st.warning("NVIDIA GPU를 찾지 못했습니다. GPU를 고르면 CPU로 돌아가거나 AI 생성이 막힙니다.")
+    st.caption("사양과 장치별 추천 모델은 본문 위쪽 「💻 컴퓨터 사양과 추천 모델」에서 볼 수 있습니다. 이 설정은 프리셋에 넣지 않고 이 컴퓨터에 저장합니다.")
+
     st.subheader("영상 이해 / 대본")
     if not models:
         st.error("Ollama에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요.")
@@ -215,7 +273,7 @@ with st.sidebar:
         setting_slider("감정 표현 강도", "exaggeration")
         if st.button("▶ 미리 듣기", width="stretch", help="고른 목소리로 예시 문장을 읽어 봅니다 (GPU, 몇 초)."):
             with st.spinner("목소리를 만드는 중..."):
-                engine = tts.ChatterboxEngine(get_chatterbox(), voices.sample_path(ss.voice_id), ss.exaggeration)
+                engine = tts.ChatterboxEngine(get_chatterbox(ss.device), voices.sample_path(ss.voice_id), ss.exaggeration)
                 ss.voice_preview = str(engine.synthesize_cached(PREVIEW_TEXT, config.WORK_DIR / "voices" / "preview"))
         if ss.get("voice_preview") and Path(ss.voice_preview).exists():
             st.audio(ss.voice_preview)
@@ -311,6 +369,24 @@ st.caption(
     "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
     "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
+with st.expander(f"💻 컴퓨터 사양과 추천 모델 · 지금: {system.DEVICES[ss.device]}"):
+    gpu_text = ", ".join(f"{g.name} {g.vram_gb:.0f}GB" for g in specs.gpus) or "NVIDIA GPU 없음"
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("GPU (VRAM)", f"{specs.vram_gb:.0f} GB" if specs.gpus else "없음", help=gpu_text)
+    c2.metric("RAM", f"{specs.ram_gb:.0f} GB", f"남은 {specs.ram_free_gb:.0f} GB", delta_color="off")
+    c3.metric("CPU 코어", f"{specs.cores}개", help=specs.cpu)
+    c4.metric("작업 폴더 디스크 여유", f"{specs.disk_free_gb:,} GB")
+    st.caption(f"{specs.os} · CPU {specs.cpu} · GPU {gpu_text}"
+               + (f" (드라이버 {specs.gpus[0].driver})" if specs.gpus else ""))
+    suggested = system.suggested_device(specs)
+    st.markdown(f"이 컴퓨터 추천 계산 장치: **{system.DEVICES[suggested]}** · 지금 설정: **{system.DEVICES[ss.device]}** "
+                "(사이드바 「💻 계산 장치」에서 바꿈)")
+    # 추천 문구가 길어서 줄바꿈되는 표(st.table)로 보여 준다
+    st.table([{"작업": task, "GPU로 돌릴 때 추천": gpu, "CPU로 돌릴 때 추천": cpu, "이 PC": system.fits(need, specs, ss.device)}
+              for task, gpu, cpu, need in system.RECOMMENDED], hide_index=True)
+    st.caption("GPU 메모리는 모델을 하나씩 쓸 때 기준입니다. 이 앱은 단계마다 모델을 바꿔 올리고(AI 생성 전에는 Ollama 모델을 내림) "
+               "생성 모델은 한동안 쓰지 않으면 내려서 GPU 메모리를 돌려줍니다.")
+
 MODE_LABELS = {"upload": "📼 영상으로 만들기", "ai": "✨ 영상 없이 AI로 만들기"}
 ss.setdefault("mode", "upload")
 
@@ -387,6 +463,23 @@ if proj is None and ss.mode == "upload":
     st.info(f"영상을 올리면 시작합니다. 긴 영상은 분석할 구간을 {config.MAX_SOURCE_SECONDS // 60}분 이하로 골라 주세요.")
     st.stop()
 AI_ENGINES = {**generate.ENGINES, "mix": "섞기 (동영상·이미지 번갈아)"}
+
+
+def model_table() -> None:
+    """어떤 단계를 어떤 AI 모델이 하는지 보여 준다."""
+    rows = [
+        {"단계": "대본·장면 구성, 장면 설명 → 영어 프롬프트", "모델": f"{llm_model or '(Ollama 모델 없음)'}",
+         "만든 곳": "Ollama (사이드바 「LLM」에서 바꿈)", "하는 일": "주제로 제목·장면별 나레이션·장면 설명을 씀"},
+        *[{"단계": label, "모델": generate.MODEL_INFO[k]["name"], "만든 곳": f"{generate.MODEL_INFO[k]['by']} · {generate.MODEL_INFO[k]['repo']}",
+           "하는 일": f"{generate.MODEL_INFO[k]['what']} ({generate.MODEL_INFO[k]['speed']})"}
+          for k, label in (("image", "장면: AI 이미지 + 움직임"), ("video", "장면: AI 동영상"), ("music", "배경음악 (사이드바)"))],
+        {"단계": "나레이션 음성", "모델": "Edge TTS" if ss.engine == "edge" else "Chatterbox Multilingual",
+         "만든 곳": "사이드바 「목소리 엔진」", "하는 일": "나레이션을 읽고 단어 시간으로 자막을 맞춤"},
+    ]
+    with st.expander("🤖 사용하는 AI 모델", expanded=True):
+        st.table(rows, hide_index=True)
+
+
 if proj is None:  # 영상 없이 AI로: 주제 → 대본·장면 구성
     gen_ok, gen_msg = generate.available()
     if not gen_ok:
@@ -395,11 +488,12 @@ if proj is None:  # 영상 없이 AI로: 주제 → 대본·장면 구성
                  placeholder="예: 초보자를 위한 집에서 하는 아침 스트레칭 / 비 오는 날 혼자 즐기는 카페의 분위기")
     st.radio("장면 만드는 방식", list(AI_ENGINES), format_func=AI_ENGINES.get, key="ai_engine", horizontal=True,
              help="AI 이미지 + 움직임은 장면당 몇 초, AI 동영상은 장면당 1분 안팎 걸립니다.")
+    model_table()
     st.caption("쇼츠 길이·말투·목소리·배경음악·자막은 사이드바 설정을 씁니다. "
                "AI가 쓴 대본은 사실과 다를 수 있으니 2단계에서 꼭 확인하세요.")
     if st.button("1단계 · AI 대본 + 장면 구성", type="primary",
                  disabled=llm_model is None or not ss.get("ai_topic", "").strip()):
-        with st.status("대본을 쓰는 중...", expanded=True) as status:
+        with st.status(f"{llm_model}(으)로 대본과 장면 구성을 쓰는 중...", expanded=True) as status:
             try:
                 new_project = project.new_ai(ss.ai_topic)
                 title, cards = pipeline.plan_ai(llm_model, ss.ai_topic, target_sec, llm.STYLES[style_label], ss.ai_engine)
@@ -497,49 +591,79 @@ def ensure_prompt(clip: dict) -> None:
         clip["prompt_src"] = text
 
 
-def preview_scene(p: project.Project, short: dict, uid: str, new_seed: bool) -> None:
+def card_scene(clip: dict) -> dict:
+    """AI 장면 카드 → 생성 요청 {prompt(영어), engine, seed, seconds}."""
+    return {"prompt": clip.get("prompt", ""), "engine": clip.get("engine", "image"),
+            "seed": int(clip.get("seed", 0)), "seconds": float(clip.get("seconds", 5.0))}
+
+
+def enqueue_cards(p: project.Project, short: dict, uids: set[str], new_seed: bool = False) -> int:
+    """AI 장면 카드들을 생성 큐에 넣는다 (설명은 영어 프롬프트로 번역). 넣은 개수를 돌려준다."""
     sync_cards(short)
-    clip = next(c for c in short["clips"] if c["uid"] == uid)
-    if not clip.get("prompt_ko", "").strip():
-        ss.flash = "장면 설명을 먼저 써 주세요."
-        return
-    if new_seed:
-        clip["seed"] = int(clip.get("seed", 0)) + 1
-    try:
+    scenes = []
+    for clip in short["clips"]:
+        if clip.get("kind") != "ai" or clip["uid"] not in uids or not clip.get("prompt_ko", "").strip():
+            continue
+        if new_seed:
+            clip["seed"] = int(clip.get("seed", 0)) + 1
+            clip.pop("preview", None)
         ensure_prompt(clip)
-        path = generate.scene_clips([{"prompt": clip["prompt"], "engine": clip.get("engine", "image"),
-                                      "seed": int(clip.get("seed", 0)), "seconds": float(clip.get("seconds", 5.0))}])[0]
-        clip["preview"] = str(path)
-    except RuntimeError as e:
-        ss.flash = str(e)[:300]
+        scenes.append({**card_scene(clip), "label": clip["prompt_ko"].replace("*", "").strip()[:40], "card_uid": clip["uid"],
+                       "project": f"{p.name} · {short['title'][:20]}"})
     project.save(p)
     refresh_cards()
+    return genqueue.add(scenes)
+
+
+def card_queue_item(clip: dict) -> dict | None:
+    """이 카드의 지금 설정(설명·방식·시드)으로 넣은 큐 항목 (다른 설정으로 넣었던 것은 무시)."""
+    item = genqueue.status_of_card(clip["uid"])
+    if item and clip.get("prompt") and generate.scene_clip_path(genqueue.scene_of(item)) == generate.scene_clip_path(card_scene(clip)):
+        return item
+    return None
 
 
 def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
-    """AI 장면 카드: 미리보기·만들기, 방식·길이, 장면 설명, 나레이션."""
+    """AI 장면 카드: 미리보기·큐에 넣기, 방식·길이, 장면 설명, 나레이션."""
     uid = clip["uid"]
+    if clip.get("prompt") and not (clip.get("preview") and Path(clip["preview"]).exists()):
+        made = generate.cached_clip(card_scene(clip))  # 큐에서 다 만들었으면 미리보기로
+        if made:
+            clip["preview"] = str(made)
+            project.save(p)
     with st.container(border=True, key=f"cardbox_{uid}"):
         col_media, col_opts, col_text = st.columns([1.3, 1, 3])
         with col_media:
             preview = Path(clip.get("preview", ""))
+            item = card_queue_item(clip)
             if clip.get("preview") and preview.exists():
                 st.video(str(preview))
+            elif item and item["status"] in (genqueue.WAITING, genqueue.RUNNING):
+                where = f" ({item['position']}번째)" if item["position"] else ""
+                st.info(f"{genqueue.STATUS_LABELS[item['status']]}{where} · 아래 「AI 장면 생성 큐」")
+            elif item and item["status"] == genqueue.FAILED:
+                st.error("❌ 만들기 실패 · 아래 큐에서 이유를 볼 수 있습니다")
             else:
                 st.info("🎨 아직 만들지 않은 AI 장면")
-            gen_ok, gen_msg = generate.available()
+            gen_ok, gen_msg = generate.scene_available(clip.get("engine", "image"))
             col_make, col_again = st.columns(2)
-            make = col_make.button("🎨 만들기", key=f"gen_{uid}", disabled=not gen_ok,
-                                   help=gen_msg or "이 장면을 미리 만들어 봅니다.", width="stretch")
+            make = col_make.button("➕ 큐에 넣기", key=f"gen_{uid}", disabled=not gen_ok,
+                                   help=gen_msg or "이 장면을 생성 큐에 넣습니다. 큐가 차례로 만들어 이 카드에 보여 줍니다.",
+                                   width="stretch")
             again = col_again.button("🎲 다른 그림", key=f"regen_{uid}", disabled=not gen_ok,
-                                     help="같은 설명으로 다른 장면을 만듭니다.", width="stretch")
+                                     help="같은 설명, 다른 시드로 큐에 넣습니다.", width="stretch")
             if make or again:
-                with st.spinner("AI 장면을 만드는 중... (처음에는 모델을 불러오느라 오래 걸립니다)"):
-                    preview_scene(p, short, uid, again)
+                sync_cards(short)
+                if not clip.get("prompt_ko", "").strip():
+                    ss.flash = "장면 설명을 먼저 써 주세요."
+                else:
+                    with st.spinner("장면 설명을 영어 프롬프트로 바꾸는 중..."):
+                        added = enqueue_cards(p, short, {uid}, new_seed=again)
+                    ss.flash = "큐에 넣었습니다." if added else "이미 만들었거나 큐에 있는 장면입니다."
                 st.rerun()
         with col_opts:
             st.markdown(f"**장면 {i + 1}** · ✨ AI")
-            engine = st.selectbox("만드는 방식", list(generate.ENGINES), format_func=lambda e: generate.ENGINES[e].split(" (")[0],
+            engine = st.selectbox("만드는 방식", list(generate.ENGINES), format_func=lambda e: generate.ENGINES[e].rsplit(" (", 1)[0],
                                   index=list(generate.ENGINES).index(clip.get("engine", "image")), key=card_key(uid, "engine"))
             seconds = st.number_input("길이(초)", 2.0, 15.0, float(clip.get("seconds", 5.0)), 0.5, format="%.1f",
                                       key=card_key(uid, "seconds"), help="나레이션이 더 길면 나레이션 길이만큼 늘어납니다.")
@@ -624,7 +748,7 @@ if run_analyze:
             st.write("✂️ 구간 자르기, 오디오 추출")
             job = pipeline.prepare_job(source, start, end)
             st.write("📝 대사 인식 (Whisper)")
-            pipeline.transcribe(job, get_whisper())
+            pipeline.transcribe(job, get_whisper(ss.device))
             st.write("🖼️ 장면 캡처")
             pipeline.capture_frames(job)
             st.write(f"👀 장면 이해 ({llm_model})")
@@ -670,10 +794,17 @@ def settings_summary() -> str:
     return f"{ss.style} · {voice} · {layout} · {subs} · 원본 소리 {ss.original_gain:.2f}/{ss.duck_gain:.2f} · {bgm}"
 
 
+def ai_models_summary(cards: list[dict]) -> str:
+    kinds = sorted({c.get("engine", "image") for c in cards if c.get("kind") == "ai"})
+    if not kinds:
+        return ""
+    return f" · LLM {llm_model} · AI 장면 {', '.join(generate.MODEL_INFO[k]['name'] for k in kinds)}"
+
+
 def make_engine():
     if ss.engine == "edge":
         return tts.EdgeTTSEngine(ss.edge_voice, ss.rate)
-    return tts.ChatterboxEngine(get_chatterbox(), voices.sample_path(ss.voice_id), ss.exaggeration)
+    return tts.ChatterboxEngine(get_chatterbox(ss.device), voices.sample_path(ss.voice_id), ss.exaggeration)
 
 
 def build_short(p: project.Project, short: dict, engine) -> None:
@@ -700,7 +831,7 @@ def build_short(p: project.Project, short: dict, engine) -> None:
     p.results.insert(0, {
         "id": project.new_id(), "short_id": short["id"], "title": short["title"],
         "video": str(video), "report": report, "created": project.now(),
-        "duration": round(media.probe(video).duration, 1), "summary": settings_summary(),
+        "duration": round(media.probe(video).duration, 1), "summary": settings_summary() + ai_models_summary(cards),
     })
     project.save(p)
 
@@ -771,6 +902,19 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
                 set_project(p)
             st.rerun()
 
+    ai_cards = [c for c in short["clips"] if c.get("kind") == "ai"]
+    if ai_cards:
+        not_made = [c for c in ai_cards if not (c.get("preview") and Path(c["preview"]).exists())]
+        gen_ok, gen_msg = generate.available()
+        if st.button(f"🎬 AI 장면 {len(not_made)}개 모두 큐에 넣기", key=f"enqueue_all_{sid}",
+                     disabled=not gen_ok or not not_made,
+                     help=gen_msg or "아직 만들지 않은 AI 장면을 전부 생성 큐에 넣습니다. 큐가 차례로 만들고, "
+                                     "그동안 다른 카드를 고치거나 큐 순서를 바꿀 수 있습니다."):
+            with st.spinner("장면 설명을 영어 프롬프트로 바꾸는 중..."):
+                added = enqueue_cards(p, short, {c["uid"] for c in not_made})
+            ss.flash = f"AI 장면 {added}개를 큐에 넣었습니다." if added else "모두 이미 만들었거나 큐에 있습니다."
+            st.rerun()
+
     if st.button("3단계 · 나레이션 + 쇼츠 만들기", type="primary", disabled=not clips, key=f"make_{sid}"):
         with st.status("쇼츠를 만드는 중...", expanded=True) as status:
             try:
@@ -821,6 +965,84 @@ else:
     for tab, item in zip(tabs, proj.shorts):
         with tab:
             short_editor(proj, item, job)
+
+
+# ───────────────────────── AI 장면 생성 큐 ─────────────────────────
+def queue_rows() -> None:
+    """큐 목록: 순서 바꾸기·지우기·취소·다시 시도. 끝난 항목이 생기면 카드를 새로 그린다."""
+    items = genqueue.items()
+    finished = {q["id"] for q in items if q["status"] in (genqueue.DONE, genqueue.FAILED)}
+    if ss.get("queue_finished") is not None and finished - ss.queue_finished:
+        ss.queue_finished = finished
+        st.rerun(scope="app")  # 카드 미리보기·상태를 새로 그림
+    ss.queue_finished = finished
+    waiting = [q for q in items if q["status"] == genqueue.WAITING]
+    running = [q for q in items if q["status"] == genqueue.RUNNING]
+    done = [q for q in items if q["status"] == genqueue.DONE]
+    failed = [q for q in items if q["status"] in (genqueue.FAILED, genqueue.CANCELED)]
+
+    col_info, col_pause, col_clear_done, col_clear_wait = st.columns([3, 1, 1, 1])
+    paused = genqueue.is_paused()
+    col_info.markdown(f"만드는 중 **{len(running)}** · 대기 **{len(waiting)}** · 완료 {len(done)} · 실패·취소 {len(failed)}"
+                      + (" · ⏸ **일시정지됨**" if paused else ""))
+    col_pause.button("▶ 이어서 만들기" if paused else "⏸ 일시정지", key="q_pause", width="stretch",
+                     on_click=genqueue.set_paused, args=(not paused,),
+                     help="일시정지하면 지금 만드는 장면까지만 만들고 멈춥니다.")
+    col_clear_done.button("완료 비우기", key="q_clear_done", width="stretch", disabled=not (done or failed),
+                          on_click=genqueue.clear, args=((genqueue.DONE, genqueue.FAILED, genqueue.CANCELED),))
+    col_clear_wait.button("대기 전부 빼기", key="q_clear_wait", width="stretch", disabled=not waiting,
+                          on_click=genqueue.clear, args=((genqueue.WAITING,),))
+    if not items:
+        st.caption("큐가 비어 있습니다. AI 장면 카드의 「➕ 큐에 넣기」나 「🎬 모두 큐에 넣기」로 넣으세요.")
+        return
+
+    order = running + waiting + failed + done
+    for q in order:
+        with st.container(border=True, key=f"q_{q['id']}"):
+            col_state, col_text, col_btns = st.columns([1.2, 4, 2])
+            kind = "video" if q["engine"] == "video" else "image"
+            if q["status"] == genqueue.WAITING:
+                col_state.markdown(f"⏳ **{waiting.index(q) + 1}번째**")
+            else:
+                col_state.markdown(genqueue.STATUS_LABELS[q["status"]])
+            label = (q["label"] or q["prompt"][:40]).replace("*", "").strip()  # 설명에 ** 가 있으면 굵게 표시가 깨짐
+            col_text.markdown(f"**{label}** · {q['seconds']:.1f}초 · 시드 {q['seed']}")
+            col_text.caption(f"{generate.MODEL_INFO[kind]['name']} · {q['project']} · 넣은 시각 {q['created']}")
+            if q["status"] == genqueue.RUNNING:
+                prog = genqueue.progress(q["id"])
+                if prog.get("total"):
+                    col_text.progress(prog["step"] / prog["total"], text=f"{prog['step']} / {prog['total']} 단계")
+                else:
+                    col_text.caption(prog.get("note", "준비 중"))
+            if q.get("error"):
+                with col_text.expander("실패 이유"):
+                    st.code(q["error"][-600:])
+            b1, b2, b3 = col_btns.columns(3)
+            if q["status"] == genqueue.WAITING:
+                pos = waiting.index(q)
+                b1.button("⬆", key=f"qup_{q['id']}", help="앞으로", disabled=pos == 0,
+                          on_click=genqueue.move, args=(q["id"], -1))
+                b2.button("⬇", key=f"qdown_{q['id']}", help="뒤로", disabled=pos + 1 == len(waiting),
+                          on_click=genqueue.move, args=(q["id"], 1))
+                b3.button("🗑", key=f"qdel_{q['id']}", help="큐에서 빼기", on_click=genqueue.remove, args=(q["id"],))
+            elif q["status"] == genqueue.RUNNING:
+                b3.button("⏹", key=f"qstop_{q['id']}", help="지금 만드는 장면 취소", on_click=genqueue.remove, args=(q["id"],))
+            else:
+                if q["status"] in (genqueue.FAILED, genqueue.CANCELED):
+                    b1.button("🔁", key=f"qretry_{q['id']}", help="다시 시도", on_click=genqueue.retry, args=(q["id"],))
+                b3.button("🗑", key=f"qdel_{q['id']}", help="목록에서 지우기", on_click=genqueue.remove, args=(q["id"],))
+
+
+genqueue.ensure_runner()
+queue_items = genqueue.items()
+if any(c.get("kind") == "ai" for s in proj.shorts for c in s["clips"]) or queue_items:
+    st.divider()
+    active = any(q["status"] in (genqueue.WAITING, genqueue.RUNNING) for q in queue_items)
+    st.subheader("AI 장면 생성 큐")
+    st.caption("넣은 순서대로 한 장면씩 만듭니다. 대기 중인 장면은 순서를 바꾸거나 뺄 수 있고, 다른 카드를 고치는 동안에도 "
+               "계속 만듭니다. 큐는 저장되어 새로고침해도 남습니다. 쇼츠를 만들 때 이미 만든 장면은 다시 만들지 않습니다.")
+    # 만드는 중일 때만 2초마다 새로 고침
+    st.fragment(queue_rows, run_every=2 if active else None)()
 
 # ───────────────────────── 결과 기록 ─────────────────────────
 def delete_result(p: project.Project, result_id: str) -> None:

@@ -11,6 +11,7 @@ AppTest는 파일 업로드를 지원하지 않아서, 업로드 뒤 화면(2단
 import asyncio
 import base64
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -211,7 +212,10 @@ def test_ai_scene_card(page):
     card.get_by_label("나레이션 (자막)").press("Control+Enter")
     page.wait_for_timeout(1200)
     t = time.time()
-    card.get_by_role("button", name="🎨 만들기").click()
+    card.get_by_role("button", name="➕ 큐에 넣기").click()
+    page.get_by_text("AI 장면 생성 큐").first.wait_for(timeout=60000)
+    check("큐에 넣기 → 생성 큐에 항목", page.locator('[class*="st-key-q_"]').count() >= 1)
+    # 큐가 다 만들면 카드에 미리보기 영상이 붙는다 (큐 패널이 2초마다 확인하고 화면을 새로 그림)
     page.locator('[class*="st-key-cardbox_"]').nth(n).locator("video").wait_for(timeout=300000)
     check("🎨 만들기 → 카드에 AI 장면 미리보기", True, f"{time.time() - t:.0f}초")
 
@@ -226,7 +230,12 @@ def test_ai_music(page):
     t = time.time()
     side.get_by_role("button", name="음악 만들기").click()
     side.get_by_text("AI 음악을 만들어 보관함에 넣었습니다").wait_for(timeout=300000)
-    picked = side.get_by_role("combobox", name="배경음악").input_value()
+    # 완료 문구는 배경음악 칸보다 위에 먼저 그려지므로, 칸이 새 값으로 바뀔 때까지 잠깐 기다린다
+    for _ in range(20):
+        picked = side.get_by_role("combobox", name="배경음악").input_value()
+        if "잔잔한 피아노" in picked:
+            break
+        page.wait_for_timeout(500)
     check("AI 음악 만들기 → 바로 골라짐", "잔잔한 피아노" in picked, f"{picked}, {time.time() - t:.0f}초")
 
 
@@ -341,6 +350,15 @@ def test_ai_mode(page, out: Path):
     page.get_by_text("✨ 영상 없이 AI로 만들기").click()
     page.wait_for_timeout(1500)
     check("AI 모드에서는 영상 업로드 칸이 없음", page.locator(ZONE).count() == 0)
+    models_text = page.locator('[data-testid="stMain"]').inner_text()
+    check("AI 모드에 사용하는 AI 모델 표시", "🤖 사용하는 AI 모델" in models_text)
+    page.locator('[data-testid="stMain"]').get_by_text("💻 컴퓨터 사양과 추천 모델").click()
+    page.wait_for_timeout(1000)
+    main_text = page.locator('[data-testid="stMain"]').inner_text()
+    check("컴퓨터 사양 섹션 (GPU·RAM, CPU/GPU 추천)",
+          "RAM" in main_text and "GPU로 돌릴 때 추천" in main_text and "CPU로 돌릴 때 추천" in main_text)
+    side = page.locator('[data-testid="stSidebar"]')
+    check("사이드바 계산 장치 설정", side.get_by_text("GPU + CPU 함께 (GPU 메모리 아끼기)").count() == 1)
     page.get_by_label("어떤 쇼츠를 만들까요?").fill("비 오는 날 창가에서 즐기는 따뜻한 차 한 잔")
     page.get_by_label("어떤 쇼츠를 만들까요?").press("Control+Enter")
     page.wait_for_timeout(1000)
@@ -352,6 +370,35 @@ def test_ai_mode(page, out: Path):
     prompts = [c.get_by_label("장면 설명 (한글로 써도 됩니다)").input_value() for c in cards.all()]
     check("AI 대본 → AI 장면 카드", cards.count() >= 3 and all(prompts), f"{cards.count()}장면, {time.time() - t:.0f}초")
     check("AI 모드에는 원본 구간 추가 버튼이 없음", page.get_by_role("button", name="➕ 구간 추가").count() == 0)
+
+    # 생성 큐: 모두 넣기 → 대기 항목 순서 바꾸기·빼기 → 남은 장면이 다 만들어짐
+    if page.get_by_role("button", name="완료 비우기").is_enabled():
+        page.get_by_role("button", name="완료 비우기").click()
+    page.get_by_role("button", name="⏸ 일시정지").click()  # 순서를 바꾸는 동안 멈춰 둠
+    page.wait_for_timeout(1000)
+    page.get_by_role("button", name=re.compile(r"🎬 AI 장면 \d+개 모두 큐에 넣기")).click()
+    page.get_by_text("일시정지됨").wait_for(timeout=120000)
+    page.wait_for_timeout(1500)
+    rows = page.locator('[class*="st-key-q_"]')
+    waiting = [r for r in rows.all() if "번째" in r.inner_text()]
+    check("모두 큐에 넣기 → 장면 수만큼 대기", len(waiting) == cards.count(), f"대기 {len(waiting)} / 장면 {cards.count()}")
+    row_id = lambda r: next(c for c in r.get_attribute("class").split() if c.startswith("st-key-q_"))  # noqa: E731
+    first_id = row_id(waiting[0])
+    waiting[0].get_by_role("button", name="⬇").click()
+    page.wait_for_timeout(1500)
+    rows = [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]
+    check("큐 순서 바꾸기 (⬇)", row_id(rows[1]) == first_id, f"{first_id} → 2번째")
+    rows[-1].get_by_role("button", name="🗑").click()
+    page.wait_for_timeout(1500)
+    rows = [r for r in page.locator('[class*="st-key-q_"]').all() if "번째" in r.inner_text()]
+    check("큐에서 빼기 (🗑)", len(rows) == cards.count() - 1, f"대기 {len(rows)}")
+    t = time.time()
+    page.get_by_role("button", name="▶ 이어서 만들기").click()
+    page.wait_for_function(
+        "() => document.querySelectorAll('[class*=\"st-key-cardbox_\"] video').length >= "
+        f"{cards.count() - 1}", timeout=900000)
+    check("큐가 이어서 만들어 카드에 미리보기", True, f"{time.time() - t:.0f}초")
+    page.screenshot(path=str(out / "ai_queue.png"), full_page=True)
     t = time.time()
     page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
     page.get_by_role("button", name="⬇️ 다운로드").wait_for(timeout=900000)

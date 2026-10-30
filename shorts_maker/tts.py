@@ -81,11 +81,12 @@ class EdgeTTSEngine(_CachedEngine):
         out_path.with_suffix(".words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
 
 
-def load_chatterbox():
+def load_chatterbox(device: str = "gpu"):
+    """device: 설정의 계산 장치 ("gpu" | "hybrid" | "cpu")."""
     import torch
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if device != "cpu" and torch.cuda.is_available() else "cpu"
     model = ChatterboxMultilingualTTS.from_pretrained(device=device)
     model.default_conds = model.conds  # 내장 기본 목소리 (목소리 샘플을 쓴 뒤 되돌릴 때 사용)
     return model

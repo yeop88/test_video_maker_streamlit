@@ -20,11 +20,12 @@ class Segment:
     text: str
 
 
-def load_whisper():
+def load_whisper(device: str = "gpu"):
+    """device: 설정의 계산 장치 ("gpu" | "hybrid" | "cpu"). Whisper는 작아서 hybrid도 GPU에 올린다."""
     import torch
     from transformers import pipeline
 
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cuda:0" if device != "cpu" and torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device != "cpu" else torch.float32
     return pipeline("automatic-speech-recognition", model=config.WHISPER_MODEL, dtype=dtype, device=device)
 
