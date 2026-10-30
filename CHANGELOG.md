@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-30
+
+작업 이어서 하기, 구간 카드 편집, 결과 기록, 단어 강조 자막, 배경음악, 피사체 따라 크롭, SRT·썸네일, 한 영상에서 쇼츠 여러 편, 그리고 AI 생성(장면 이미지·영상, 배경음악, 제로샷 음성 복제 목소리 보관함)과 영상 없이 주제만으로 만드는 모드를 넣었습니다. 검증: 영상 처리 5가지 조건 두 번 연속 5/5, 실제 브라우저 51/51.
+
 ### Added
 - **영상 없이 AI로 만들기**: 화면 위 「✨ 영상 없이 AI로 만들기」에서 주제만 쓰면 쇼츠를 만듭니다.
   - LLM이 대본을 씁니다: 제목, 장면마다 나레이션·그림 설명(한글)·생성용 영어 프롬프트·길이.
@@ -71,13 +75,16 @@
   - 영상 업로드 칸을 크게 바꾸고 "🎬 영상 파일을 여기로 끌어다 놓으세요" 안내를 넣었습니다.
   - **화면 어디에 놓아도** 업로드됩니다. 끌고 오는 동안 화면 전체에 "여기에 놓으면 영상이 업로드됩니다" 안내가 나옵니다.
   - 업로드 칸 밖에 놓았을 때 브라우저가 영상 파일을 열어 앱을 떠나 버리던 동작을 막았습니다.
-  - 영상을 올리면 업로드 칸이 작아집니다. 사이드바 목소리 샘플 칸은 그대로입니다.
+  - 영상을 올리면 업로드 칸이 작아집니다. 사이드바의 다른 업로드 칸은 그대로입니다.
 - 받는 영상 형식에 AVI 추가.
 - 실제 브라우저(Microsoft Edge) 화면 테스트 [tests/test_ui_browser.py](tests/test_ui_browser.py): 드래그 업로드 11개 검사, 업로드부터 다운로드까지 전체 흐름. 개발용 패키지는 [requirements-dev.txt](requirements-dev.txt)(Playwright).
 - 작업 폴더를 환경 변수 `SHORTS_WORK_DIR`로 바꿀 수 있습니다 (테스트용).
 
 ### Changed
-- 사이드바의 목소리 샘플 파일 올리기를 목소리 보관함으로 바꿨습니다 (`pipeline.save_voice_sample` 삭제).
+- **Breaking** 사이드바의 목소리 샘플 파일 올리기를 목소리 보관함으로 바꿨습니다. 쓰던 샘플은 「➕ 새 목소리 만들기 → 파일」로 다시 넣어야 합니다 (`pipeline.save_voice_sample` 삭제).
+- **Breaking** `requirements.txt`에 `opencv-python-headless==4.11.0.86`(피사체 따라 크롭)이 추가되고 `pyarrow==24.0.0`이 고정되어, `pip install -r requirements.txt`를 다시 해야 합니다. AI 생성을 쓰려면 `.venv-gen`도 따로 설치합니다 (README 「AI 생성 기능 설치」).
+- 렌더링을 카드마다 세로 장면을 만들어 잇는 방식으로 바꿨습니다 (원본 구간·AI 장면을 섞을 수 있게).
+- 기존 프리셋은 그대로 읽힙니다. 새 설정(쇼츠 개수, 자막 스타일, 강조 색, 배경음악, 목소리 보관함)은 기본값으로 채워집니다.
 
 ### Fixed
 - **쇼츠를 만든 직후 앱 서버가 죽던 문제** (Windows `access violation`): Whisper 등 torch/CUDA를 올린 뒤 결과 표에서 pyarrow DLL을 처음 불러올 때 일어났습니다. 앱 시작 때 pyarrow를 먼저 불러옵니다. 실제 브라우저 테스트로 찾았습니다.
@@ -92,7 +99,7 @@
 - 나레이션이 "세 가지 팁을 소개합니다 → 두 번째로…"처럼 순서를 건너뛰던 문제: 순서 표현(첫째, 두 번째…)이 빠지면 빠진 번호를 알려 주고 다시 요청합니다.
 - 제목·자막의 이모지("🌅", "✨")가 흑백 윤곽 그림으로 나오던 문제: 자막 렌더러(libass)가 컬러 이모지를 그리지 못하므로 화면에 넣을 때 뺍니다.
 
-검증 기록: [docs/test_reports/2026-10-29_ui_check.md](docs/test_reports/2026-10-29_ui_check.md)
+검증 기록: [docs/test_reports/2026-10-29_ui_check.md](docs/test_reports/2026-10-29_ui_check.md), [docs/test_reports/2026-10-30_v0.5.0_verification.md](docs/test_reports/2026-10-30_v0.5.0_verification.md)
 
 ## [0.4.0] - 2026-10-29
 
@@ -193,6 +200,7 @@
 - [docs/huggingface_streamlit_examples.md](docs/huggingface_streamlit_examples.md): Streamlit으로 배포하기 좋은 Hugging Face 예제 30선
 - [docs/huggingface_service_ideas.md](docs/huggingface_service_ideas.md): 모델 조합 프로젝트 아이디어 10선 (2026-10-29 비상업·난이도 순으로 개정)
 
-[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yeop88/test_video_maker_streamlit/releases/tag/v0.3.0

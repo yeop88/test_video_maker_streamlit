@@ -1,0 +1,604 @@
+[
+  {
+    "test": "T1_korean_lake_vlog",
+    "source": "1280x720 41.8s",
+    "target": 30,
+    "frames": 21,
+    "frames_described": 21,
+    "speech_segments": 11,
+    "title": "새벽 호수 산책",
+    "clips": [
+      {
+        "start": 18.77,
+        "end": 31.2,
+        "narration": "새벽 5시에 일어난 이유는 이 아름다운 순간을 꼭 보고 싶었기 때문입니다."
+      },
+      {
+        "start": 31.2,
+        "end": 35.7,
+        "narration": "노을빛이 호수 물결 위에 비춰 하늘과 땅이 하나 되어 보입니다."
+      },
+      {
+        "start": 35.7,
+        "end": 41.78,
+        "narration": "조용한 이곳에서 쉬어 가시기를 바라며 다음 영상에서 또 만나요."
+      }
+    ],
+    "clip_count": 3,
+    "clips_total_sec": 23.0,
+    "narration_foreign_script": false,
+    "narration_hangul_ratio": 0.99,
+    "keywords_hit": [
+      "호수",
+      "물",
+      "노을",
+      "새벽",
+      "하늘"
+    ],
+    "topics_missing": [],
+    "ordinals": [],
+    "ordinals_skipped": [],
+    "invented_numbers": [],
+    "out_of_sync": [],
+    "cuts_mid_sentence": 0,
+    "clips_overlap": 0,
+    "output": "1080x1920 22.90s audio=True",
+    "cues": 30,
+    "report": [
+      {
+        "원본 구간": "18.8~31.2초",
+        "쇼츠 위치": "0.0~12.4초",
+        "나레이션(초)": 4.5,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "31.2~35.7초",
+        "쇼츠 위치": "12.4~16.9초",
+        "나레이션(초)": 3.6,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "35.7~41.8초",
+        "쇼츠 위치": "16.9~23.0초",
+        "나레이션(초)": 3.9,
+        "상태": "OK"
+      }
+    ],
+    "narration_cut": 0,
+    "heard": "새벽 5시에 일어난 이유는 이 아름다운 순간을 꼭 보고 싶었기 때문입니다. 새벽 5시에 일어났답니다. 낮에는 근처 마을에서 쉬었다가 저녁에 다시 왔어요. 노을빛이 호수 물결 위에 비쳐 하늘과 땅이 하나 되어 보입니다. 조용한 이곳에서 쉬어가시기를 바라며 다음 영상에서 또 만나요.",
+    "narration_heard_coverage": 0.988,
+    "duck_amplitude_ratio": 0.226,
+    "srt_blocks": 3,
+    "karaoke_events": 30,
+    "karaoke_tokens": 30,
+    "checks": {
+      "output_1080x1920_audio": true,
+      "frames_described": true,
+      "clips_valid": true,
+      "length_near_target": true,
+      "narration_korean": true,
+      "narration_grounded(keywords>=2)": true,
+      "all_topics_covered": true,
+      "title_meaningful(hangul>=4)": true,
+      "no_skipped_ordinals": true,
+      "no_invented_numbers": true,
+      "narration_matches_scene": true,
+      "no_mid_sentence_cut": true,
+      "narration_heard>=0.85": true,
+      "subs_within_video": true,
+      "no_narration_cut": true,
+      "srt_one_per_sentence": true,
+      "srt_in_order_in_video": true,
+      "thumbnail_1080x1920": true,
+      "karaoke_one_event_per_word": true,
+      "karaoke_in_order": true
+    },
+    "passed": true,
+    "timings": {
+      "analyze_plan": 31.1,
+      "make_short": 11.2
+    },
+    "true_scenes": [
+      "0.0-9.6 img28.jpg",
+      "9.6-18.4 img29.jpg",
+      "18.4-26.2 img30.jpg",
+      "26.2-35.1 img102.jpg",
+      "35.1-41.8 img31.jpg"
+    ],
+    "frame_captions": [
+      "1.0s 아침 햇살이 비치는 잔잔한 호수와 그 반사가 보이는 평화로운 자연 풍경입니다. 왼쪽에는 나무가 덮인 산과 안개가 감싸진 해안선이, 오른쪽에는 풀밭이 있는 작은 섬이나 반도가 보입니다.",
+      "3.0s 맑은 파란 하늘 아래 태양이 빛나는 호수 풍경으로, 왼쪽에는 나무가 있는 산과 오른쪽에는 잔디밭이 보입니다. 물결 없는 고요한 수면이 주변 경치를 비추며 평화로운 분위기를 자아냅니다.",
+      "5.0s 맑은 하늘 아래 푸른 호수가 반짝이며, 왼쪽에는 나무가 덮인 산과 오른쪽에는 풀밭이 보이는 평화로운 자연 풍경입니다. 화면 중앙에 밝게 빛나는 태양이 있고, 물결 없이 고요한 수면이 전체를 차지합니다.",
+      "7.0s 평온한 호수 풍경으로, 맑은 하늘 아래 태양이 비추며 물결이 잔잔합니다. 왼쪽에는 산과 나무가 있고 오른쪽에는 초록색 풀밭이 보입니다.",
+      "9.0s 맑은 하늘 아래 푸른 호수와 산맥이 보이는 평화로운 자연 풍경입니다. 태양이 중앙에 떠 있고, 물결 없는 수면은 주변 경관을 선명하게 비추며, 오른쪽에는 갈색과 초록색의 풀밭이 보입니다.",
+      "11.0s 눈 덮인 산과 푸른 호수가 보이는 평화로운 자연 풍경입니다. 나무가 울창한 숲이 호수 가장자리를 따라 늘어서 있고, 하늘에는 밝은 햇살이 비추며 전체적으로 차분하고 고요한 분위기를 자아냅니다.",
+      "13.0s 아름다운 자연 풍경을 담은 영상 장면으로, 푸른 호수 앞에는 울창한 숲이 있고 배경으로는 눈 덮인 산맥과 맑은 하늘이 보입니다. 햇살이 부드럽게 비추며 평화롭고 차분한 분위기를 자아냅니다.",
+      "15.0s 산과 나무가 있는 평화로운 호수 풍경",
+      "17.0s 눈 덮인 산과 푸른 호수가 있는 평화로운 자연 풍경이 보입니다. 나무와 바위가 어우러진 조용한 분위기로, 아침 햇살이 비치는 듯한 밝고 차분한 색감이 특징입니다.",
+      "19.0s 눈 덮인 산과 잔잔한 호수가 보이는 평화로운 자연 풍경입니다. 해가 지거나 뜨는 시간대인지 모호하지만, 연한 분홍색과 파란색이 어우러진 부드러운 색감이 특징이며, 화면에는 글자가 없습니다.",
+      "21.0s 해가 지는 저녁 시간대, 산과 호수가 보이는 평화로운 자연 풍경이 담겨 있습니다.",
+      "23.0s 해가 지는 저녁 시간대, 산과 호수가 보이는 평화로운 자연 풍경이 담겨 있습니다.",
+      "25.0s 산과 나무가 있는 호수 일몰 장면",
+      "27.0s 해가 지는 저녁 시간대, 붉은색과 보라색이 어우러진 하늘 아래 평온한 호수나 강이 펼쳐져 있습니다. 왼쪽에는 눈이 쌓인 산과 그 기슭에 있는 숲이 있고, 오른쪽에는 잔잔한 물결이 보이는 해안선이 보입니다.",
+      "29.0s 눈 덮인 산과 호수가 보이는 평화로운 풍경으로, 해가 지거나 뜨는 시간대 (일출 또는 일몰) 에 붉은색과 보라색이 어우러진 따뜻한 색감이 특징입니다.",
+      "31.0s 눈 덮인 산과 평온한 호수가 보이는 일몰 장면으로, 붉은색과 보라색이 어우러진 따뜻한 색감이 특징입니다.",
+      "33.0s 눈 덮인 산과 호수가 보이는 평화로운 자연 풍경으로, 해가 지는 저녁 시간대입니다. 하늘은 붉은색과 보라색이 어우러진 따뜻한 색감을 띠고 있으며, 물결 없는 호수 표면에는 달린 반사가 선명하게 보입니다.",
+      "35.0s 눈 덮인 산과 숲이 있는 호수나 강변의 풍경으로, 해가 지는 저녁 시간대입니다. 하늘은 붉은색과 주황색 계열의 따뜻한 색감을 띠며, 물에는 그 반사가 보입니다.",
+      "37.0s 평온한 호수가 있는 사막 풍경으로, 멀리 산맥과 부드러운 모래언덕이 보이며 하늘에는 밝은 태양이 떠 있습니다. 전체적으로 차분하고 고요한 분위기를 풍기며, 파란색과 분홍빛이 어우러진 색감이 돋보입니다.",
+      "39.0s 평온한 호수 앞에는 부드러운 곡선을 가진 모래 언덕과 멀리 산맥이 펼쳐져 있으며, 하늘에는 밝은 태양이 떠 있습니다. 전체적으로 연한 파스텔 톤의 색감이 사용되어 차분하고 고요한 분위기를 자아냅니다.",
+      "41.0s 밝은 하늘 아래 넓은 호수와 그 뒤로 펼쳐진 부드러운 언덕들이 보이는 평화로운 풍경입니다. 화면에는 글자가 없습니다."
+    ],
+    "subtitles": [
+      "0.3-0.6 {\\c&H00E6FF&\\fscx108\\fscy108}새벽{\\c&HFFFFFF&\\fscx100\\fscy100} 5시에 일어난\\N이유는 이 아름다운",
+      "0.6-1.1 새벽 {\\c&H00E6FF&\\fscx108\\fscy108}5시에{\\c&HFFFFFF&\\fscx100\\fscy100} 일어난\\N이유는 이 아름다운",
+      "1.1-1.5 새벽 5시에 {\\c&H00E6FF&\\fscx108\\fscy108}일어난{\\c&HFFFFFF&\\fscx100\\fscy100}\\N이유는 이 아름다운",
+      "1.5-2.0 새벽 5시에 일어난\\N{\\c&H00E6FF&\\fscx108\\fscy108}이유는{\\c&HFFFFFF&\\fscx100\\fscy100} 이 아름다운",
+      "2.0-2.2 새벽 5시에 일어난\\N이유는 {\\c&H00E6FF&\\fscx108\\fscy108}이{\\c&HFFFFFF&\\fscx100\\fscy100} 아름다운",
+      "2.2-2.7 새벽 5시에 일어난\\N이유는 이 {\\c&H00E6FF&\\fscx108\\fscy108}아름다운{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "2.7-3.2 {\\c&H00E6FF&\\fscx108\\fscy108}순간을{\\c&HFFFFFF&\\fscx100\\fscy100} 꼭 보고 싶었기\\N때문입니다.",
+      "3.2-3.4 순간을 {\\c&H00E6FF&\\fscx108\\fscy108}꼭{\\c&HFFFFFF&\\fscx100\\fscy100} 보고 싶었기\\N때문입니다.",
+      "3.4-3.6 순간을 꼭 {\\c&H00E6FF&\\fscx108\\fscy108}보고{\\c&HFFFFFF&\\fscx100\\fscy100} 싶었기\\N때문입니다.",
+      "3.6-4.1 순간을 꼭 보고 {\\c&H00E6FF&\\fscx108\\fscy108}싶었기{\\c&HFFFFFF&\\fscx100\\fscy100}\\N때문입니다.",
+      "4.1-4.8 순간을 꼭 보고 싶었기\\N{\\c&H00E6FF&\\fscx108\\fscy108}때문입니다.{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "12.7-13.3 {\\c&H00E6FF&\\fscx108\\fscy108}노을빛이{\\c&HFFFFFF&\\fscx100\\fscy100} 호수 물결 위에\\N비춰 하늘과 땅이 하나",
+      "13.3-13.6 노을빛이 {\\c&H00E6FF&\\fscx108\\fscy108}호수{\\c&HFFFFFF&\\fscx100\\fscy100} 물결 위에\\N비춰 하늘과 땅이 하나",
+      "13.6-13.9 노을빛이 호수 {\\c&H00E6FF&\\fscx108\\fscy108}물결{\\c&HFFFFFF&\\fscx100\\fscy100} 위에\\N비춰 하늘과 땅이 하나",
+      "13.9-14.1 노을빛이 호수 물결 {\\c&H00E6FF&\\fscx108\\fscy108}위에{\\c&HFFFFFF&\\fscx100\\fscy100}\\N비춰 하늘과 땅이 하나",
+      "14.1-14.5 노을빛이 호수 물결 위에\\N{\\c&H00E6FF&\\fscx108\\fscy108}비춰{\\c&HFFFFFF&\\fscx100\\fscy100} 하늘과 땅이 하나",
+      "14.5-14.9 노을빛이 호수 물결 위에\\N비춰 {\\c&H00E6FF&\\fscx108\\fscy108}하늘과{\\c&HFFFFFF&\\fscx100\\fscy100} 땅이 하나",
+      "14.9-15.3 노을빛이 호수 물결 위에\\N비춰 하늘과 {\\c&H00E6FF&\\fscx108\\fscy108}땅이{\\c&HFFFFFF&\\fscx100\\fscy100} 하나",
+      "15.3-15.5 노을빛이 호수 물결 위에\\N비춰 하늘과 땅이 {\\c&H00E6FF&\\fscx108\\fscy108}하나{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "15.5-15.8 {\\c&H00E6FF&\\fscx108\\fscy108}되어{\\c&HFFFFFF&\\fscx100\\fscy100} 보입니다.",
+      "15.8-16.4 되어 {\\c&H00E6FF&\\fscx108\\fscy108}보입니다.{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "17.2-17.6 {\\c&H00E6FF&\\fscx108\\fscy108}조용한{\\c&HFFFFFF&\\fscx100\\fscy100} 이곳에서 쉬어\\N가시기를 바라며 다음",
+      "17.6-18.1 조용한 {\\c&H00E6FF&\\fscx108\\fscy108}이곳에서{\\c&HFFFFFF&\\fscx100\\fscy100} 쉬어\\N가시기를 바라며 다음",
+      "18.1-18.3 조용한 이곳에서 {\\c&H00E6FF&\\fscx108\\fscy108}쉬어{\\c&HFFFFFF&\\fscx100\\fscy100}\\N가시기를 바라며 다음",
+      "18.3-18.8 조용한 이곳에서 쉬어\\N{\\c&H00E6FF&\\fscx108\\fscy108}가시기를{\\c&HFFFFFF&\\fscx100\\fscy100} 바라며 다음",
+      "18.8-19.2 조용한 이곳에서 쉬어\\N가시기를 {\\c&H00E6FF&\\fscx108\\fscy108}바라며{\\c&HFFFFFF&\\fscx100\\fscy100} 다음",
+      "19.2-19.7 조용한 이곳에서 쉬어\\N가시기를 바라며 {\\c&H00E6FF&\\fscx108\\fscy108}다음{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "19.7-20.4 {\\c&H00E6FF&\\fscx108\\fscy108}영상에서{\\c&HFFFFFF&\\fscx100\\fscy100} 또 만나요.",
+      "20.4-20.5 영상에서 {\\c&H00E6FF&\\fscx108\\fscy108}또{\\c&HFFFFFF&\\fscx100\\fscy100} 만나요.",
+      "20.5-21.1 영상에서 또 {\\c&H00E6FF&\\fscx108\\fscy108}만나요.{\\c&HFFFFFF&\\fscx100\\fscy100}"
+    ],
+    "output_path": "workdir\\verify_T1_korean_lake_vlog_90664d09\\job\\shorts_20261029_194242.mp4"
+  },
+  {
+    "test": "T2_english_sleep_tips_slides",
+    "source": "1280x720 33.0s",
+    "target": 25,
+    "frames": 16,
+    "frames_described": 16,
+    "speech_segments": 10,
+    "title": "수면 개선 3가지 팁! 오늘부터 실천해보세요",
+    "clips": [
+      {
+        "start": 6.57,
+        "end": 21.0,
+        "narration": "첫째, 주말 포함 매일 같은 시간에 잠자리에 들고 일어나면 몸의 리듬을 잡을 수 있습니다. 둘째, 취침 한 시간 전 스마트폰을 멀리하세요. 푸른 빛은 뇌를 깨워버리기 때문입니다."
+      },
+      {
+        "start": 21.0,
+        "end": 31.11,
+        "narration": "셋째, 방 온도를 약 18도로 낮춰보세요. 시원한 환경이 잠을 더 잘 오게 합니다."
+      }
+    ],
+    "clip_count": 2,
+    "clips_total_sec": 24.5,
+    "narration_foreign_script": false,
+    "narration_hangul_ratio": 0.98,
+    "keywords_hit": [
+      "잠",
+      "취침",
+      "스마트폰",
+      "시간"
+    ],
+    "topics_missing": [],
+    "ordinals": [
+      1,
+      2,
+      3
+    ],
+    "ordinals_skipped": [],
+    "invented_numbers": [],
+    "out_of_sync": [],
+    "cuts_mid_sentence": 0,
+    "clips_overlap": 0,
+    "output": "1080x1920 24.54s audio=True",
+    "cues": 7,
+    "report": [
+      {
+        "원본 구간": "6.6~21.0초",
+        "쇼츠 위치": "0.0~14.4초",
+        "나레이션(초)": 10.8,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "21.0~31.1초",
+        "쇼츠 위치": "14.4~24.5초",
+        "나레이션(초)": 4.6,
+        "상태": "OK"
+      }
+    ],
+    "narration_cut": 0,
+    "heard": "첫째, 주말 포함 매일 같은 시간에 잠자리에 들고 일어나면 몸이 리듬을 잡을 수 있습니다. 둘째, 취침 1시간 전 스마트폰을 멀리하세요. 푸른 빛은 외를 깨워버리기 때문입니다. 색제, 방 온도를 약 18도로 낮춰보세요. 시원한 환경이 잠을 더 잘 오게 합니다. 오늘 밤에 잠을 더 잘 오게 합니다.",
+    "narration_heard_coverage": 0.95,
+    "duck_amplitude_ratio": 0.413,
+    "srt_blocks": 5,
+    "music_seconds": 24.54,
+    "music_in_output": 1.0,
+    "music_tail_rms": 0.0822,
+    "music_duck_ratio": 0.409,
+    "checks": {
+      "output_1080x1920_audio": true,
+      "frames_described": true,
+      "clips_valid": true,
+      "length_near_target": true,
+      "narration_korean": true,
+      "narration_grounded(keywords>=2)": true,
+      "all_topics_covered": true,
+      "title_meaningful(hangul>=4)": true,
+      "no_skipped_ordinals": true,
+      "no_invented_numbers": true,
+      "narration_matches_scene": true,
+      "no_mid_sentence_cut": true,
+      "narration_heard>=0.85": true,
+      "subs_within_video": true,
+      "no_narration_cut": true,
+      "srt_one_per_sentence": true,
+      "srt_in_order_in_video": true,
+      "thumbnail_1080x1920": true,
+      "music_full_length": true,
+      "music_in_output": true,
+      "music_ducked(<0.55)": true
+    },
+    "passed": true,
+    "timings": {
+      "analyze_plan": 33.4,
+      "make_short": 48.5
+    },
+    "true_scenes": [
+      "0.0-6.0 img101.jpg",
+      "6.0-14.0 img20.jpg",
+      "14.0-20.4 img21.jpg",
+      "20.4-27.9 img23.jpg",
+      "27.9-33.0 img22.jpg"
+    ],
+    "frame_captions": [
+      "1.0s 어두운 배경에 파란색과 보라색 조명이 비치는 반원형 구조물 앞에 검은색 사각형 안에 흰색 글씨로 '3 Tips for Better Sleep'이라는 문구가 보입니다.",
+      "3.0s 어두운 배경에 파란색과 보라색 조명이 반짝이며, 중앙에는 검은색 사각형 안에 흰색 글씨로 '3 Tips for Better Sleep'이라는 문구가 보입니다. 이 이미지는 영상의 한 장면으로, 수면 관련 팁을 소개하는 콘텐츠의 일부인 것으로 보입니다.",
+      "5.0s 어두운 배경 위에 파란색과 보라색의 빛나는 반원형 모양이 있고, 중앙에는 검은색 사각형 안에 흰색 글씨로 '3 Tips for Better Sleep'이라는 문구가 보입니다. 인물이나 구체적인 장소는 보이지 않으며, 전체적으로 차분하고 진정되는 분위기를 줍니다.",
+      "7.0s 어두운 배경 위에 보라색과 주황색 빛이 반짝이는 둥근 물체가 보입니다. 화면 중앙에는 검은색 사각형 안에 흰색 글씨로 'TIP 1: Same bedtime every day'라고 적혀 있습니다.",
+      "9.0s 어두운 배경에 보라색과 분홍색의 빛나는 반원형 물체가 있고, 그 위에 검은색 사각형 안에 흰색 글씨로 'TIP 1: Same bedtime every day'라는 문구가 보입니다. 밤이나 어두운 시간대에 촬영된 듯한 분위기입니다.",
+      "11.0s 어두운 배경에 보라색과 분홍색의 빛나는 반원이 있고, 그 위에 검은색 사각형 안에 흰 글씨로 'TIP 1: Same bedtime every day'라는 영문 문구가 보입니다.",
+      "13.0s 검은 배경 위에 보라색과 분홍색의 빛나는 반원형 그래픽이 있고, 중앙에는 'TIP 1: Same bedtime every day'라는 흰색 글자가 있는 영상의 한 장면입니다.",
+      "15.0s 어두운 배경과 파란색, 보라색 빛이 어우러진 화면 중앙에 'TIP 2: No screens 1 hour before bed'이라는 흰색 글자가 검은색 박스 안에 표시되어 있습니다. 전체적으로 차분하고 진지한 분위기를 풍깁니다.",
+      "17.0s 어두운 배경 위에 파란색과 보라색 빛이 반짝이는 원형 물체가 보입니다. 중앙에는 검은색 배경에 흰색 글씨로 'TIP 2: No screens 1 hour before bed'이라는 문구가 적혀 있습니다. 전체적으로 차분하고 진한 분위기를 풍깁니다.",
+      "19.0s 어두운 배경 위에 파란색과 보라색 조명이 비치는 반원형 물체가 보입니다. 중앙에는 검은색 배경에 흰 글씨로 'TIP 2: No screens 1 hour before bed'이라는 문구가 적혀 있습니다. 이 이미지는 수면 전 스크린 사용을 피하는 건강 팁을 전달하는 영상 장면으로 보입니다.",
+      "21.0s 어두운 배경 위에 푸른색과 보라색의 빛나는 반원형 모양이 있고, 중앙에는 'TIP 3: Keep your room cool'이라는 흰색 글자가 검은색 박스 안에 표시되어 있습니다. 전체적으로 차분하고 차가운 분위기를 풍깁니다.",
+      "23.0s 어두운 배경 위에 푸른색과 보라색의 빛나는 반원형 물체가 있으며, 중앙에는 검은색 사각형 안에 흰색 글씨로 'TIP 3: Keep your room cool'이라는 문구가 보입니다. 전체적으로 차분하고 차가운 분위기를 풍깁니다.",
+      "25.0s 어두운 배경 위에 푸른색과 보라색의 네온 빛이 반원 형태로 발광하는 물체가 보입니다. 중앙에는 검은색 직사각형 박스 안에 흰색 글씨로 'TIP 3: Keep your room cool'이라는 영문 텍스트가 표시되어 있습니다.",
+      "27.0s 어두운 배경에 푸른빛과 보라색 조명이 비친 반원형의 물체가 보입니다. 중앙에는 검은색 배경에 흰 글씨로 'TIP 3: Keep your room cool'이라는 문구가 적혀 있습니다.",
+      "29.0s 어두운 배경 위에 반원형의 빛나는 물체가 보이며, 그 중앙에는 검은색 사각형 안에 흰색 글씨로 'Sweet dreams!'이라는 문구가 있습니다. 붉은색과 보라색 계열의 색감이 어우러져 몽환적인 분위기를 자아냅니다.",
+      "31.0s 검은 배경 위에 반원형으로 빛나는 다채로운 색상의 구름과 함께 'Sweet dreams!'라는 영문 문구가 검은색 박스 안에 흰 글씨로 표시되어 있습니다. 전체적으로 어두운 밤하늘 같은 분위기이며, 보라색, 분홍색, 노란색 등 따뜻한 색감이 어우러져 몽환적인 느낌을 줍니다."
+    ],
+    "subtitles": [
+      "0.3-2.8 첫째, 주말 포함 매일\\N같은 시간에 잠자리에",
+      "2.8-4.8 들고 일어나면 몸의\\N리듬을 잡을 수",
+      "4.8-5.4 있습니다.",
+      "5.7-8.5 둘째, 취침 한 시간 전\\N스마트폰을 멀리하세요.",
+      "8.8-11.1 푸른 빛은 뇌를\\N깨워버리기 때문입니다.",
+      "14.7-17.0 셋째, 방 온도를 약\\N18도로 낮춰보세요.",
+      "17.2-19.3 시원한 환경이 잠을 더\\N잘 오게 합니다."
+    ],
+    "output_path": "workdir\\verify_T2_english_sleep_tips_slides_ec9037e7\\job\\shorts_20261029_194415.mp4"
+  },
+  {
+    "test": "T3_silent_abstract_art_voice_sample",
+    "source": "1080x1080 49.0s",
+    "target": 20,
+    "frames": 24,
+    "frames_described": 24,
+    "speech_segments": 0,
+    "title": "색채의 춤, 무지개",
+    "clips": [
+      {
+        "start": 10.5,
+        "end": 20.5,
+        "narration": "어둠 속에서 빛나는 다채로운 곡선들이 춤을 추듯 휘날립니다."
+      },
+      {
+        "start": 34.5,
+        "end": 46.0,
+        "narration": "연한 분홍색 꽃잎이 피어나듯 층층이 겹쳐지며 평온한 분위기를 자아냅니다."
+      }
+    ],
+    "clip_count": 2,
+    "clips_total_sec": 21.5,
+    "narration_foreign_script": false,
+    "narration_hangul_ratio": 1.0,
+    "keywords_hit": [
+      "색",
+      "곡선",
+      "꽃",
+      "빛"
+    ],
+    "topics_missing": [],
+    "ordinals": [],
+    "ordinals_skipped": [],
+    "invented_numbers": [],
+    "out_of_sync": [],
+    "cuts_mid_sentence": 0,
+    "clips_overlap": 0,
+    "voice_sample_f0": 143,
+    "output": "1080x1920 21.50s audio=True",
+    "cues": 17,
+    "report": [
+      {
+        "원본 구간": "10.5~20.5초",
+        "쇼츠 위치": "0.0~10.0초",
+        "나레이션(초)": 3.6,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "34.5~46.0초",
+        "쇼츠 위치": "10.0~21.5초",
+        "나레이션(초)": 5.6,
+        "상태": "OK"
+      }
+    ],
+    "narration_cut": 0,
+    "heard": "어둠 속에서 빈다는 다채로운 곡선들이 춤을 추듯 휘날립니다. 연한 분홍색 꽃이피 피어나듯 침칭이 겹쳐지며 평온한 분위기를 자아냅니다.",
+    "narration_heard_coverage": 0.911,
+    "duck_amplitude_ratio": 0.207,
+    "srt_blocks": 2,
+    "karaoke_events": 17,
+    "karaoke_tokens": 17,
+    "narration_f0": 132,
+    "checks": {
+      "output_1080x1920_audio": true,
+      "frames_described": true,
+      "clips_valid": true,
+      "length_near_target": true,
+      "narration_korean": true,
+      "narration_grounded(keywords>=2)": true,
+      "all_topics_covered": true,
+      "title_meaningful(hangul>=4)": true,
+      "no_skipped_ordinals": true,
+      "no_invented_numbers": true,
+      "narration_matches_scene": true,
+      "no_mid_sentence_cut": true,
+      "narration_heard>=0.85": true,
+      "subs_within_video": true,
+      "no_narration_cut": true,
+      "srt_one_per_sentence": true,
+      "srt_in_order_in_video": true,
+      "thumbnail_1080x1920": true,
+      "karaoke_one_event_per_word": true,
+      "karaoke_in_order": true,
+      "voice_clone_pitch(±15%)": true,
+      "ducking(ratio<0.35)": true,
+      "no_speech_in_silent_video": true
+    },
+    "passed": true,
+    "timings": {
+      "analyze_plan": 29.7,
+      "make_short": 21.0
+    },
+    "true_scenes": [
+      "0.0-7.0 img24.jpg",
+      "7.0-14.0 img25.jpg",
+      "14.0-21.0 img26.jpg",
+      "21.0-28.0 img27.jpg",
+      "28.0-35.0 img32.jpg",
+      "35.0-42.0 img34.jpg",
+      "42.0-49.0 img35.jpg"
+    ],
+    "frame_captions": [
+      "1.0s 검은 배경 위에 다채로운 색상 (빨강, 노랑, 파랑 등) 을 가진 반투명한 곡선형 사물들이 공중에 떠 있는 장면입니다.",
+      "3.0s 검은 배경 위에 선명한 분홍색, 주황색, 보라색 등 다채로운 색상의 곡선형 물체들이 공중에 떠 있는 장면입니다.",
+      "5.0s 검은 배경 위에 다채로운 색상 (빨강, 노랑, 파랑 등) 을 가진 유동적인 곡선 형태의 추상적 사물이 공중에 떠 있는 장면입니다.",
+      "7.0s 어두운 배경 위에 붉은색과 보라색 계열의 반짝이는 유연한 띠 모양 사물이 공중에 떠 있는 듯한 모습으로 배치되어 있으며, 빛이 반사되어 입체감과 움직임이 느껴지는 추상적인 장면입니다.",
+      "9.0s 어두운 배경 위에 붉은색과 보라색 계열의 반짝이는 유연한 띠 모양 물체가 공중에 떠 있는 듯한 모습으로 배치되어 있으며, 빛이 반사되는 광택감 있는 표면과 흐르는 듯한 곡선이 특징입니다.",
+      "11.0s 어두운 배경 위에 붉은색, 보라색, 주황색 등 다채로운 색상의 반투명 곡선 모양의 물체가 공중에 떠 있는 듯한 추상적인 장면입니다.",
+      "13.0s 다양한 색상 (주황색, 빨간색, 보라색 등) 을 가진 유연하고 반투명한 스트립이 어두운 배경 위에서 춤추듯 휘어지고 있는 추상적인 장면입니다.",
+      "15.0s 검은 배경 앞에 다채로운 색상(보라, 빨강, 주황 등)이 층층이 겹쳐진 유동적인 형태의 사물이 보입니다. 이 사물은 마치 액체나 천처럼 부드럽게 휘어지며 움직이는 듯한 형태를 하고 있으며, 표면에는 빛이 반사되어 광택 있는 질감을 보여줍니다.",
+      "17.0s 검은 배경 위에 다채로운 색상의 스트라이프 무늬가 흐르는 추상적인 물체가 보입니다.",
+      "19.0s 검은 배경 위에 다채로운 색상으로 이루어진 유동적인 형태의 물체가 보입니다. 이 물체는 여러 층의 스트라이프 패턴을 가지고 있으며, 파란색, 보라색, 주황색, 빨간색 등의 색상이 어우러져 있습니다. 전체적으로 역동적이고 추상적인 분위기를 풍깁니다.",
+      "21.0s 검은 배경 위에 다양한 색상의 반짝이는 액체 방울과 기포들이 공중에 떠 있는 모습입니다. 빨강, 보라, 주황 등 다채로운 색상과 빛나는 질감이 특징이며, 움직임이 느껴지는 역동적인 분위기를 자아냅니다.",
+      "23.0s 검은 배경 위에 붉은색, 보라색, 주황색 등 다양한 색상의 반짝이는 액체나 기포 같은 물체가 공중에 떠 있는 듯한 모습으로 배치되어 있으며, 빛이 반사되어 입체감과 움직임을 주는 듯한 시각적 효과를 보여줍니다.",
+      "25.0s 검은 배경 위에 붉은색과 보라색의 반짝이는 액체 모양 물체가 공중에 떠 있는 듯한 동적인 장면을 보여줍니다.",
+      "27.0s 검은 배경 위에 붉은색, 보라색, 주황색 등 다양한 색상의 반짝이는 액체나 젤리 같은 물체가 공중에 떠 있는 듯한 모습으로 보입니다.",
+      "29.0s 파란색 계열의 층층이 겹쳐진 파스텔 톤의 꽃 모양 사물이 중앙에 있고, 배경은 연한 회색이며 전체적으로 차분하고 부드러운 분위기를 풍깁니다.",
+      "31.0s 파란색 계열의 층층이 겹쳐진 종이처럼 보이는 물체가 중앙에 있고, 배경은 회색 톤이며 전체적으로 차분하고 부드러운 분위기를 풍깁니다.",
+      "33.0s 파란색 종이로 만든 꽃 모양의 물체가 회색 배경 앞에 놓여 있습니다. 부드러운 곡선과 층층이 겹쳐진 구조가 특징이며, 차분하고 예술적인 분위기를 풍깁니다.",
+      "35.0s 연한 분홍색의 층층이 겹쳐진 꽃잎 모양의 구조물이 중앙에 있고, 배경은 연한 회색입니다. 부드러운 조명이 전체를 비추고 있으며, 화면에는 글자가 없습니다.",
+      "37.0s 연한 분홍색의 층층이 겹쳐진 꽃잎 모양의 3D 그래픽 객체가 중앙에 있고, 배경은 연한 회색 톤으로 단순하며, 전체적으로 차분하고 부드러운 분위기를 풍깁니다. 화면에는 글자가 없습니다.",
+      "39.0s 연한 분홍색의 층층이 겹쳐진 꽃잎 모양의 3D 그래픽 객체가 중앙에 있고, 배경은 연한 회색입니다. 화면에는 글자가 없습니다.",
+      "41.0s 연한 분홍색의 층층이 겹쳐진 꽃잎 모양의 3D 객체가 중앙에 배치되어 있으며, 배경은 연한 회색 톤으로 단순하고 깔끔합니다. 전체적으로 차분하고 예술적인 분위기를 풍깁니다.",
+      "43.0s 회색 배경 앞에 파란색과 흰색의 부드러운 곡선이 층층이 겹쳐진 추상적인 형태가 보입니다. 물결처럼 흐르는 듯한 질감과 차분한 색감이 전체적으로 평온하고 세련된 분위기를 자아냅니다.",
+      "45.0s 회색 배경 앞에 파스텔톤의 연한 청록색으로 표현된, 여러 층이 겹쳐진 유기적인 형태의 물체가 보입니다. 부드러운 곡선과 입체적인 질감이 돋보이며, 인공 조명 아래에서 차분하고 현대적인 분위기를 풍깁니다.",
+      "47.0s 회색 배경 앞에 파란색과 흰색의 층층이 겹쳐진 곡선 형태의 추상적 구조물이 보입니다. 부드러운 질감과 중성적인 색감이 차분하고 현대적인 분위기를 자아냅니다."
+    ],
+    "subtitles": [
+      "0.3-0.6 {\\c&H00E6FF&\\fscx108\\fscy108}어둠{\\c&HFFFFFF&\\fscx100\\fscy100} 속에서 빛나는\\N다채로운 곡선들이 춤을",
+      "0.6-1.0 어둠 {\\c&H00E6FF&\\fscx108\\fscy108}속에서{\\c&HFFFFFF&\\fscx100\\fscy100} 빛나는\\N다채로운 곡선들이 춤을",
+      "1.0-1.5 어둠 속에서 {\\c&H00E6FF&\\fscx108\\fscy108}빛나는{\\c&HFFFFFF&\\fscx100\\fscy100}\\N다채로운 곡선들이 춤을",
+      "1.5-2.0 어둠 속에서 빛나는\\N{\\c&H00E6FF&\\fscx108\\fscy108}다채로운{\\c&HFFFFFF&\\fscx100\\fscy100} 곡선들이 춤을",
+      "2.0-2.6 어둠 속에서 빛나는\\N다채로운 {\\c&H00E6FF&\\fscx108\\fscy108}곡선들이{\\c&HFFFFFF&\\fscx100\\fscy100} 춤을",
+      "2.6-2.9 어둠 속에서 빛나는\\N다채로운 곡선들이 {\\c&H00E6FF&\\fscx108\\fscy108}춤을{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "2.9-3.2 {\\c&H00E6FF&\\fscx108\\fscy108}추듯{\\c&HFFFFFF&\\fscx100\\fscy100} 휘날립니다.",
+      "3.2-3.9 추듯 {\\c&H00E6FF&\\fscx108\\fscy108}휘날립니다.{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "10.3-10.7 {\\c&H00E6FF&\\fscx108\\fscy108}연한{\\c&HFFFFFF&\\fscx100\\fscy100} 분홍색 꽃잎이\\N피어나듯 층층이 겹쳐지며",
+      "10.7-11.2 연한 {\\c&H00E6FF&\\fscx108\\fscy108}분홍색{\\c&HFFFFFF&\\fscx100\\fscy100} 꽃잎이\\N피어나듯 층층이 겹쳐지며",
+      "11.2-11.7 연한 분홍색 {\\c&H00E6FF&\\fscx108\\fscy108}꽃잎이{\\c&HFFFFFF&\\fscx100\\fscy100}\\N피어나듯 층층이 겹쳐지며",
+      "11.7-12.4 연한 분홍색 꽃잎이\\N{\\c&H00E6FF&\\fscx108\\fscy108}피어나듯{\\c&HFFFFFF&\\fscx100\\fscy100} 층층이 겹쳐지며",
+      "12.4-13.0 연한 분홍색 꽃잎이\\N피어나듯 {\\c&H00E6FF&\\fscx108\\fscy108}층층이{\\c&HFFFFFF&\\fscx100\\fscy100} 겹쳐지며",
+      "13.0-13.7 연한 분홍색 꽃잎이\\N피어나듯 층층이 {\\c&H00E6FF&\\fscx108\\fscy108}겹쳐지며{\\c&HFFFFFF&\\fscx100\\fscy100}",
+      "13.7-14.2 {\\c&H00E6FF&\\fscx108\\fscy108}평온한{\\c&HFFFFFF&\\fscx100\\fscy100} 분위기를\\N자아냅니다.",
+      "14.2-15.0 평온한 {\\c&H00E6FF&\\fscx108\\fscy108}분위기를{\\c&HFFFFFF&\\fscx100\\fscy100}\\N자아냅니다.",
+      "15.0-15.9 평온한 분위기를\\N{\\c&H00E6FF&\\fscx108\\fscy108}자아냅니다.{\\c&HFFFFFF&\\fscx100\\fscy100}"
+    ],
+    "output_path": "workdir\\verify_T3_silent_abstract_art_voice_sample_3df7eb83\\job\\shorts_20261029_194520.mp4"
+  },
+  {
+    "test": "T4_two_topics_series",
+    "source": "74.8s (주제 경계 41.8s)",
+    "timings": {
+      "plan": 61.3
+    },
+    "shorts": [
+      {
+        "title": "새벽 호수와 해돋이",
+        "range": [
+          0.6,
+          39.2
+        ],
+        "focus": "맑은 호수와 눈 덮인 산을 배경으로 한 평화로운 아침 산책과 해돋이 장면",
+        "clips": [
+          {
+            "start": 0.49,
+            "end": 9.0,
+            "narration": "산속 호숫가에서 아침 산책을 나왔습니다. 맑은 공기와 거울 같은 물빛이 고요한 분위기를 자아냅니다."
+          },
+          {
+            "start": 13.97,
+            "end": 26.8,
+            "narration": "호수 건너편 소나무 숲을 따라 한 바퀴 돌면 약 1시간이 걸립니다. 해가 산 위로 떠오르며 새벽 5시에 일어난 이유를 알 수 있습니다."
+          }
+        ]
+      },
+      {
+        "title": "밤에 잘 수 있는 3가지 확실한 법칙",
+        "range": [
+          42.5,
+          74.1
+        ],
+        "focus": "밤에 잘 수 있는 방법: 일정 시간 재우기, 스마트폰 멀리하기, 방 온도 낮히기",
+        "clips": [
+          {
+            "start": 42.3,
+            "end": 47.1,
+            "narration": "잠들기 어렵다면 오늘부터 이 세 가지 팁을 따라보세요."
+          },
+          {
+            "start": 48.37,
+            "end": 55.2,
+            "narration": "첫째, 매일 같은 시간에 잠자리에 들고 일어나세요. 몸의 시계가 규칙을 좋아하기 때문입니다."
+          },
+          {
+            "start": 56.35,
+            "end": 68.9,
+            "narration": "둘째, 잠들기 한 시간 전 스마트폰을 멀리하세요. 셋째, 방 온도를 18도로 유지하세요. 차가운 공간이 숙면을 돕습니다."
+          }
+        ]
+      }
+    ],
+    "kinds": [
+      "lake",
+      "sleep"
+    ],
+    "outputs": [
+      "21.3s",
+      "24.2s"
+    ],
+    "checks": {
+      "two_shorts": true,
+      "ranges_not_overlapping": true,
+      "clips_inside_own_range": true,
+      "topics_separated(lake, sleep)": true,
+      "titles_distinct": true,
+      "both_rendered_1080x1920": true
+    },
+    "passed": true
+  },
+  {
+    "test": "T5_ai_only_no_upload",
+    "topic": "비 오는 날, 따뜻한 차",
+    "timings": {
+      "script": 4.9,
+      "make_short": 89.8
+    },
+    "scenes": [
+      {
+        "engine": "video",
+        "seconds": 5.0,
+        "prompt_ko": "흐린 비가 내리는 창가와 나무 몇 그루가 보이는 실내 장면",
+        "prompt": "A cozy indoor living room, a large window with heavy rain falling outside, bare trees visible in the grey sky, soft natural light coming through the glass, warm atmosphere, cinematic composition, 4k",
+        "narration": "창밖으로 쏟아지는 빗소리를 들으며,"
+      },
+      {
+        "engine": "image",
+        "seconds": 5.0,
+        "prompt_ko": "손을 들고 있는 투명한 글라스 컵에 담긴 뜨거운 차와 증기",
+        "prompt": "A close-up of a hand holding a clear glass cup filled with hot tea, visible steam rising gently, condensation on the glass, soft focus background, warm lighting, intimate perspective, 4k",
+        "narration": "손에 쥔 따뜻한 차의 온기가 마음을 채워요."
+      },
+      {
+        "engine": "video",
+        "seconds": 5.0,
+        "prompt_ko": "창밖의 빗줄기와 안쪽 따뜻한 실내 조명의 대비",
+        "prompt": "Contrast between the blurry rain streaks on the window and the warm yellow indoor lamp light, cozy interior shadows, peaceful mood, wide angle shot, high detail, 4k",
+        "narration": "비 내리는 시간만큼 차가 달콤하고,"
+      },
+      {
+        "engine": "image",
+        "seconds": 5.0,
+        "prompt_ko": "차 한 잔과 함께 편안한 소파와 책이 있는 창가 정적",
+        "prompt": "A quiet corner with a comfortable sofa and an open book next to the window, a glass of tea on the table, soft rain outside, peaceful atmosphere, warm color palette, static shot, 4k",
+        "narration": "오늘도 당신을 위한 작은 휴식이 되길 바랄게요."
+      }
+    ],
+    "output": "1080x1920 20.00s",
+    "narration_heard_coverage": 0.908,
+    "scene_difference": [
+      99.5,
+      100.5,
+      66.7
+    ],
+    "video_scene_motion": [
+      6.6,
+      19.9
+    ],
+    "checks": {
+      "output_1080x1920": true,
+      "length_near_target": true,
+      "3+_scenes_mixed": true,
+      "narration_korean": true,
+      "prompts_english": true,
+      "no_invented_numbers": true,
+      "narration_heard>=0.85": true,
+      "scenes_look_different": true,
+      "ai_video_moves": true,
+      "no_narration_cut": true,
+      "srt_thumbnail": true
+    },
+    "passed": true,
+    "report": [
+      {
+        "원본 구간": "AI 장면 (video)",
+        "쇼츠 위치": "0.0~5.0초",
+        "나레이션(초)": 2.3,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "AI 장면 (image)",
+        "쇼츠 위치": "5.0~10.0초",
+        "나레이션(초)": 2.9,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "AI 장면 (video)",
+        "쇼츠 위치": "10.0~15.0초",
+        "나레이션(초)": 2.5,
+        "상태": "OK"
+      },
+      {
+        "원본 구간": "AI 장면 (image)",
+        "쇼츠 위치": "15.0~20.0초",
+        "나레이션(초)": 3.1,
+        "상태": "OK"
+      }
+    ],
+    "heard": "창밖으로 쏟아지는 빗소리를 들으며 손에 쥔 따뜻한 차의 온기가 마음을 비 내리는 시간만큼 차가 달콤하고 당신을 위한 작은 휴식이 되길 바랄게요."
+  }
+]
