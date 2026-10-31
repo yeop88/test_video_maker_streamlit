@@ -12,7 +12,7 @@ import streamlit as st
 
 import shorts_maker
 from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, preview, project, subtitles,
-                          storage, system, tasks, tts, voices)
+                          fonts, storage, system, tasks, tts, voices)
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -192,6 +192,25 @@ def add_music_upload() -> None:
         ss.preset_msg = ("success", f"'{file.name}'을(를) 배경음악 보관함에 넣었습니다.")
     except RuntimeError as e:
         ss.preset_msg = ("error", str(e))
+
+
+def add_font_upload(key: str) -> None:
+    """올린 글꼴을 보관함에 넣고 고른다. 업로드 칸은 키를 바꿔 비운다 (남은 파일 때문에 다음 업로드가 꼬이지 않게)."""
+    file = ss.get(key)
+    ss.font_rev = ss.get("font_rev", 0) + 1
+    if file is None:
+        return
+    try:
+        ss.subtitle_font = fonts.add_upload(file.name, file.getvalue())  # 콜백 안이라 위젯 값을 바꿀 수 있음
+        ss.preset_msg = ("success", f"'{file.name}' 글꼴을 넣고 골랐습니다.")
+    except ValueError as e:
+        ss.preset_msg = ("error", str(e))
+
+
+def delete_font() -> None:
+    fonts.delete(ss.subtitle_font)
+    ss.subtitle_font = ""
+    ss.preset_msg = ("success", "글꼴을 보관함에서 지웠습니다. 자동 글꼴로 돌아갑니다.")
 
 
 # ───────────────────────── 공용 작업 큐에 넣기 ─────────────────────────
@@ -608,6 +627,20 @@ def screen_settings() -> None:
                  horizontal=True, disabled=not ss.show_title)
         st.radio("자막 스타일", presets.CHOICES["subtitle_style"], format_func=SUBTITLE_LABELS.get, key="subtitle_style",
                  help="단어 강조: 나레이션이 읽는 낱말을 다른 색으로 조금 크게 보여 줍니다.", horizontal=True)
+        font_list = {f["id"]: f for f in fonts.list_fonts()}
+        if ss.subtitle_font not in font_list:  # 다른 컴퓨터의 프리셋 등으로 이 컴퓨터에 없는 글꼴
+            ss.subtitle_font = ""
+        col_font, col_font_del = st.columns([4, 1], vertical_alignment="bottom")
+        col_font.selectbox("글꼴 (자막·제목·썸네일)", [""] + list(font_list), key="subtitle_font",
+                           format_func=lambda i: "자동 (맑은 고딕 등)" if not i else
+                           f"{'📁 ' if font_list[i]['source'] == 'upload' else ''}{font_list[i]['name']}")
+        col_font_del.button("🗑", key="font_delete", on_click=delete_font, width="stretch",
+                            disabled=not ss.subtitle_font.startswith("up_"), help="올린 글꼴을 보관함에서 지우기")
+        upload_key = f"font_upload_{ss.get('font_rev', 0)}"
+        st.file_uploader("글꼴 올리기 (TTF·OTF, 올리면 바로 보관함에 넣고 고름)", type=fonts.FONT_TYPES, key=upload_key,
+                         on_change=add_font_upload, args=(upload_key,),
+                         help="한글이 들어 있는 글꼴만 넣을 수 있습니다. 영상에 써도 되는 라이선스인지 확인하세요 "
+                              "(눈누·네이버 나눔글꼴 등 무료 글꼴도 사용 범위를 확인).")
         setting_slider("자막 크기", "font_size")
         setting_slider("자막 위치 (아래에서 %)", "margin_percent",
                        help=f"쇼츠 앱은 아래쪽 약 {subtitles.SAFE_BOTTOM:.0%}를 제목·채널·설명으로 가립니다. "
@@ -618,7 +651,9 @@ def screen_settings() -> None:
     with col_view:
         st.checkbox("앱 UI가 가리는 곳 보기", key="show_safe_guide", value=True,
                     help="쇼츠 앱의 상태 표시줄·제목·버튼이 덮는 대략적인 곳 (공식 수치가 없어 참고용)")
-        st.image(style_preview(), caption="미리보기 (실제 쇼츠와 같은 방법으로 그림)", width="stretch")
+        with st.spinner("미리보기를 그리는 중… (가변 글꼴은 처음 한 번 굵게 바꾸느라 10초쯤 걸림)"):
+            image = style_preview()
+        st.image(image, caption="미리보기 (실제 쇼츠와 같은 방법으로 그림)", width="stretch")
         if ss.margin_percent < subtitles.SAFE_BOTTOM * 100:
             st.caption(f"⚠️ 자막이 아래쪽 앱 UI({subtitles.SAFE_BOTTOM:.0%})에 가려질 수 있습니다.")
     close_button()
@@ -641,7 +676,8 @@ def style_preview() -> bytes:
             background = preview_background(str(p.job.video), (clip["start"] + clip["end"]) / 2, ss.layout)
         text = next((c["narration"] for c in short["clips"] if c.get("narration")), text)
     return preview.render(background, title, text, ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style,
-                          ss.highlight_color, ss.title_style, ss.show_title, ss.get("show_safe_guide", True))
+                          ss.highlight_color, ss.title_style, ss.show_title, ss.get("show_safe_guide", True),
+                          font=ss.subtitle_font)
 
 
 def voice_summary() -> str:
@@ -665,7 +701,8 @@ SETTING_GROUPS = [
     ("🎬 화면·자막", "화면·자막 설정", screen_settings,
      lambda: f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · "
              + (f"제목 {TITLE_LABELS[ss.title_style].split(' (')[0]} · " if ss.show_title else "제목 없음 · ")
-             + f"{SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"),
+             + f"{SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"
+             + (f" · {next((f['name'] for f in fonts.list_fonts() if f['id'] == ss.subtitle_font), '')}" if ss.subtitle_font else "")),
     ("💻 컴퓨터·AI 모델", "컴퓨터와 AI 모델 설정", computer_settings,
      lambda: f"{device_summary()} · {generate.IMAGE_MODELS[ss.image_model]['name']} · {generate.MODEL_INFO['video']['name']}"),
 ]
@@ -927,6 +964,26 @@ def storage_dialog() -> None:
     close_button()
 
 
+def import_project() -> None:
+    """「📦 작업 가져오기」에 올린 zip을 새 작업으로 풀고 연다 (같은 파일은 한 번만)."""
+    file = ss.get("import_file")
+    if file is None or ss.get("imported_file") == file.file_id:
+        return
+    ss.imported_file = file.file_id
+    tmp = config.WORK_DIR / "exports" / f"import_{uuid.uuid4().hex[:8]}.zip"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp.write_bytes(file.getvalue())
+        opened = project.import_zip(tmp)
+        set_project(opened, f"'{opened.name}' 작업을 가져왔습니다.")
+    except (ValueError, OSError, KeyError) as e:
+        ss.flash = f"가져오지 못했습니다: {e}"
+    except Exception as e:  # zip이 깨졌을 때 등
+        ss.flash = f"가져오지 못했습니다 (zip 파일을 확인하세요): {e}"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 recent_items = project.recent(limit=50)
 with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
     if not recent_items:
@@ -942,6 +999,8 @@ with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
             col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
             if col_del.button("🗑", key=f"delrecent_{item['dir'].name}", help="이 작업 지우기 (확인 후)"):
                 confirm_delete_recent(item["dir"], item["name"], item["results"])
+    st.file_uploader("📦 작업 가져오기 (내보낸 zip)", type=["zip"], key="import_file", on_change=import_project,
+                     help="다른 PC나 이전에 「📦」로 내보낸 작업을 새 작업으로 가져옵니다.")
     if st.button("🧹 저장 공간 보기", help="작업·캐시·모델이 디스크를 얼마나 쓰는지 보고, 다시 만들 수 있는 캐시를 지웁니다."):
         ss.storage_rev = ss.get("storage_rev", 0) + 1  # 열 때마다 새로 잼
         storage_dialog()
@@ -1030,10 +1089,39 @@ def probe(path: str) -> media.VideoInfo:
     return media.probe(Path(path))
 
 
+@st.dialog("📦 작업 내보내기")
+def export_dialog(p: project.Project) -> None:
+    """작업 하나(올린 영상, 분석, 구성, AI 장면, 결과)를 zip으로 내려받는다. 다른 PC에서 「작업 가져오기」로 이어서 작업."""
+    st.markdown(f"**{p.name}**")
+    with_results = st.checkbox(f"만든 쇼츠 영상도 담기 ({len(p.results)}개)", value=True, key="export_results",
+                               disabled=not p.results)
+    st.caption("올린 영상, 분석 결과(대사·장면 설명), 카드 구성, AI 장면 그림이 들어갑니다. "
+               "설정(목소리·자막 등)은 프리셋으로 따로 내보내세요.")
+    made = ss.get("export_file")
+    if st.button("zip 만들기", type="primary", width="stretch"):
+        folder = config.WORK_DIR / "exports"
+        for old in folder.glob(f"{p.id}_*.zip"):  # 이 작업의 예전 내보내기는 지운다
+            old.unlink(missing_ok=True)
+        out = folder / f"{p.id}_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+        bar = st.progress(0.0, text="담는 중…")
+        project.export_zip(p, out, with_results and bool(p.results),
+                           on_progress=lambda d, n: bar.progress(d / n, text=f"담는 중… {d} / {n}"))
+        made = ss.export_file = {"project": p.id, "path": str(out)}
+        bar.empty()
+    if made and made["project"] == p.id and Path(made["path"]).exists():
+        path = Path(made["path"])
+        st.download_button(f"⬇️ 다운로드 ({path.stat().st_size / 1024 ** 2:,.1f}MB)", data=path.read_bytes(),
+                           file_name=f"{Path(p.name).stem[:30]}_{path.stem.split('_', 1)[1]}.zip", mime="application/zip",
+                           on_click="ignore", width="stretch", key="export_download")
+    close_button()
+
+
 run_analyze = False
 if proj.kind == "ai":
-    col_topic, col_close = st.columns([6, 1])
+    col_topic, col_export, col_close = st.columns([6, 0.6, 1])
     col_topic.markdown(f"**✨ {proj.topic}**")
+    if col_export.button("📦", key="export_open", help="이 작업을 zip으로 내보내기 (다른 PC로 옮기거나 보관)"):
+        export_dialog(proj)
     col_close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
 else:
     source = proj.source_path
@@ -1042,8 +1130,10 @@ else:
     with col_video:
         st.video(str(source))
     with col_options:
-        head, close = st.columns([5, 1])
+        head, col_export, close = st.columns([5, 0.6, 1])
         head.markdown(f"**{proj.name}** · {info.duration:.1f}초 · {info.width}×{info.height}" + ("" if info.has_audio else " · 소리 없음"))
+        if col_export.button("📦", key="export_open", help="이 작업을 zip으로 내보내기 (다른 PC로 옮기거나 보관)"):
+            export_dialog(proj)
         close.button("닫기", on_click=close_project, help="작업은 저장되어 있어서 「최근 작업」에서 다시 열 수 있습니다.")
         total = round(info.duration, 1)
         start, end = st.slider("분석할 구간 (초)", 0.0, total, (0.0, min(total, float(config.MAX_SOURCE_SECONDS))), 0.5)
@@ -1322,14 +1412,15 @@ def card_preview(job: pipeline.Job, short: dict, clip: dict) -> bytes:
     narration = ss.get(card_key(uid, "narration"), clip["narration"]) or " "
     return scene_preview(str(job.video), round(min(start + 0.3, job.duration), 1), ss.layout, short["title"], narration,
                          ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style, ss.highlight_color,
-                         ss.title_style, ss.show_title)
+                         ss.title_style, ss.show_title, font=ss.subtitle_font)
 
 
 @st.cache_data(show_spinner=False, max_entries=200)
-def scene_preview(video: str, t: float, layout: str, title: str, text: str, *style) -> bytes:
-    """세로 장면 미리보기 PNG (작은 그림이라 많이 캐시해도 됨. 큰 배경 프레임은 캐시하지 않음)."""
+def scene_preview(video: str, t: float, layout: str, title: str, text: str, *style, font: str) -> bytes:
+    """세로 장면 미리보기 PNG (작은 그림이라 많이 캐시해도 됨. 큰 배경 프레임은 캐시하지 않음).
+    style = (font_size, margin_percent, color, subtitle_style, highlight_color, title_style, show_title)."""
     background = media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, config.OUTPUT_SIZE)
-    return preview.render(background, title, text, *style, False, width=240)
+    return preview.render(background, title, text, *style, False, width=240, font=font)
 
 
 def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None, vertical: bool = False) -> list[dict]:

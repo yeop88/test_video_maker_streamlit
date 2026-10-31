@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import config, media, subtitles
+from . import config, fonts, media, subtitles
 
 SAMPLE_TITLE = "잠 잘 자는 3가지 방법"
 SAMPLE_TEXT = "첫째, 매일 같은 시간에 자고 일어나세요. 몸의 리듬은 규칙성을 좋아합니다."
@@ -48,11 +48,11 @@ def _guide(image: Image.Image, font_file: Path) -> Image.Image:
 
 def render(background: bytes | None, title: str, text: str, font_size: int, margin_percent: int, color: str,
            subtitle_style: str, highlight_color: str, title_style: str, show_title: bool, guide: bool,
-           width: int = 360) -> bytes:
+           width: int = 360, font: str = "") -> bytes:
     """미리보기 PNG. background는 세로 장면 RGB 바이트(1080x1920, media.layout_frame) 또는 None."""
     w, h = config.OUTPUT_SIZE
-    font_file, family = subtitles.find_korean_font()
-    key = hashlib.sha1(repr((background is not None and hashlib.sha1(background).hexdigest(), title, text, font_size,
+    font_file, family = fonts.resolve(font)
+    key = hashlib.sha1(repr((background is not None and hashlib.sha1(background).hexdigest(), str(font_file), title, text, font_size,
                              margin_percent, color, subtitle_style, highlight_color, title_style, show_title)).encode())
     work = config.WORK_DIR / "preview" / key.hexdigest()[:12]
     out = work / "frame.png"

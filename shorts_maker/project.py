@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import threading
 import time
@@ -192,6 +193,135 @@ def recent(limit: int = 20) -> list[dict]:
             "results": len(data.get("results", [])),
         })
     return sorted(items, key=lambda x: x["updated"], reverse=True)[:limit]
+
+
+# ───────────── 내보내기·가져오기 (zip) ─────────────
+# state.json의 절대 경로를 "@project/<상대 경로>", "@gen_cache/<파일>"로 바꿔 담고, 가져올 때 새 위치로 되돌린다.
+# AI 장면 카드의 미리보기(workdir/gen_cache)는 작업 폴더 밖에 있어서 zip의 gen_cache/에 함께 담는다.
+EXPORT_VERSION = 1
+STORED = {".mp4", ".mp3", ".m4a", ".png", ".jpg", ".jpeg", ".webp", ".zip", ".mov", ".mkv", ".webm"}  # 이미 압축된 파일
+_GEN_IMAGE = re.compile(r"^(img_[0-9a-zA-Z]+)_[\d.]+s_m\d\.mp4$")
+
+
+def _swap_paths(value, swap):
+    """JSON 값 안의 문자열 경로를 swap(문자열) → 문자열로 바꾼다."""
+    if isinstance(value, dict):
+        return {k: _swap_paths(v, swap) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_swap_paths(v, swap) for v in value]
+    if isinstance(value, str):
+        return swap(value)
+    return value
+
+
+def _inside(path: Path, folder: Path) -> Path | None:
+    try:
+        return path.resolve().relative_to(folder.resolve())
+    except (ValueError, OSError):
+        return None
+
+
+def export_zip(project: Project, out: Path, include_results: bool = True, on_progress=None) -> Path:
+    """작업 폴더(올린 영상, 분석, 구성, 결과)와 AI 장면을 zip 하나로. 결과 영상은 빼고 담을 수도 있다."""
+    import zipfile
+
+    folder = project.dir
+    gen = config.WORK_DIR / "gen_cache"
+    with _lock_of(folder):
+        data = json.loads((folder / STATE_FILE).read_text(encoding="utf-8"))
+    extra: set[Path] = set()
+
+    def swap(text: str) -> str:
+        if len(text) < 4 or not (":" in text[:3] or text.startswith("/")):
+            return text
+        path = Path(text)
+        rel = _inside(path, folder)
+        if rel is not None:
+            return "@project/" + rel.as_posix()
+        rel = _inside(path, gen)
+        if rel is not None and path.exists():
+            extra.add(path)
+            base = _GEN_IMAGE.match(path.name)
+            if base and (gen / f"{base.group(1)}.png").exists():  # 이미지 장면: 원본 그림도 (다른 길이로 다시 움직일 수 있게)
+                extra.add(gen / f"{base.group(1)}.png")
+            return "@gen_cache/" + rel.as_posix()
+        return text
+
+    data = _swap_paths(data, swap)
+    if not include_results:
+        data["results"] = []
+    data["export"] = {"version": EXPORT_VERSION, "folder": folder.name, "exported": now()}
+    skip = {(folder / STATE_FILE).resolve(), (folder / f".{STATE_FILE}.tmp").resolve()}
+    if not include_results:
+        skip |= {p.resolve() for p in (folder / "results").glob("*")} if (folder / "results").exists() else set()
+    files = [p for p in folder.rglob("*") if p.is_file() and p.resolve() not in skip]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".part")
+    total = len(files) + len(extra)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        z.writestr(STATE_FILE, json.dumps(data, ensure_ascii=False, indent=1))
+        for i, path in enumerate(files + sorted(extra)):
+            name = (f"files/{path.relative_to(folder).as_posix()}" if path in files
+                    else f"gen_cache/{path.relative_to(gen).as_posix()}")
+            z.write(path, name, compress_type=zipfile.ZIP_STORED if path.suffix.lower() in STORED else zipfile.ZIP_DEFLATED)
+            if on_progress:
+                on_progress(i + 1, total)
+    tmp.replace(out)
+    return out
+
+
+def import_zip(source: Path) -> Project:
+    """내보낸 zip을 새 작업으로 가져온다. 같은 폴더 이름이 이미 있으면 뒤에 번호를 붙인다."""
+    import zipfile
+
+    with zipfile.ZipFile(source) as z:
+        names = z.namelist()
+        if STATE_FILE not in names:
+            raise ValueError("이 앱에서 내보낸 작업 파일(zip)이 아닙니다 (state.json 없음).")
+        data = json.loads(z.read(STATE_FILE).decode("utf-8"))
+        info = data.pop("export", {})
+        if int(info.get("version", 0)) > EXPORT_VERSION:
+            raise ValueError("더 새로운 버전의 앱에서 내보낸 파일입니다. 앱을 업데이트하세요.")
+        wanted = re.sub(r"[^0-9A-Za-z_\-]", "", str(info.get("folder", ""))) or f"import_{new_id()}"
+        folder = config.WORK_DIR / wanted
+        n = 2
+        while folder.exists():
+            folder = config.WORK_DIR / f"{wanted}_{n}"
+            n += 1
+        gen = config.WORK_DIR / "gen_cache"
+        members = []
+        for name in names:  # 폴더 밖으로 풀리는 이름(../, 절대 경로)은 거부
+            if name == STATE_FILE or name.endswith("/"):
+                continue
+            prefix, _, rel = name.partition("/")
+            root = {"files": folder, "gen_cache": gen}.get(prefix)
+            target = (root / rel).resolve() if root and rel else None
+            if target is None or _inside(target, root) is None:
+                raise ValueError(f"작업 파일 안에 잘못된 경로가 있습니다: {name}")
+            members.append((name, target))
+        folder.mkdir(parents=True)
+        try:
+            for name, target in members:
+                if target.exists() and name.startswith("gen_cache/"):
+                    continue  # 같은 AI 장면이 이미 있음 (이름이 내용 해시)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(name) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+
+    def swap(text: str) -> str:
+        if text.startswith("@project/"):
+            return str(folder / text[len("@project/"):])
+        if text.startswith("@gen_cache/"):
+            return str(gen / text[len("@gen_cache/"):])
+        return text
+
+    data = _swap_paths(data, swap)
+    data["name"] = data.get("name", folder.name)
+    (folder / STATE_FILE).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return load(folder)
 
 
 def delete(project_dir: Path) -> None:

@@ -59,6 +59,7 @@ DEFAULTS = {
     "subtitle_style": "plain",
     "highlight_color": "#FFE600",
     "title_style": "bold",  # 제목 모양: 크고 굵은 두 줄(핵심 낱말 강조) / 반투명 상자 / 위쪽 띠
+    "subtitle_font": "",  # 자막·제목 글꼴 ID (fonts.py, "" = 자동). 다른 컴퓨터에 없으면 자동으로
 }
 
 # 기본 제공 프리셋 (덮어쓰거나 지울 수 없음). 빠진 값은 DEFAULTS를 따른다.

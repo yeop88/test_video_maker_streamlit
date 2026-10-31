@@ -18,6 +18,7 @@ import soundfile as sf
 from PIL import Image
 
 from . import config, extras, generate, llm, media, mixing, music, reframe, subtitles
+from . import fonts as fonts_lib  # 이 모듈 안에서 fonts는 글꼴 폴더 변수 이름
 from .config import MIX_SAMPLE_RATE as SR
 
 LEAD_SEC = 0.3  # 구간이 시작되고 나레이션이 나오기까지 쉼
@@ -464,6 +465,7 @@ def make_short(
     subtitle_style: str = "plain",
     highlight_color: str = "#FFE600",
     title_style: str = "box",
+    font: str = "",
     music_path: Path | None = None,
     music_gain: float = 0.25,
     music_duck: float = 0.4,
@@ -594,7 +596,7 @@ def make_short(
 
     # 7) 자막·제목 입히기
     on_status("📝 자막 입히기")
-    font_file, family = subtitles.find_korean_font()
+    font_file, family = fonts_lib.resolve(font)
     fonts = work / "fonts"
     fonts.mkdir(exist_ok=True)
     if not (fonts / font_file.name).exists():

@@ -511,7 +511,16 @@ def test_ai_mode(page, out: Path):
     check("큐가 이어서 만들어 카드에 미리보기", True, f"{time.time() - t:.0f}초")
     page.screenshot(path=str(out / "ai_queue.png"), full_page=True)
     t = time.time()
-    page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+    wait_queue_idle(page)  # 마지막 장면이 끝나 화면 전체를 다시 그리는 중에 누르면 무시됨
+    for _ in range(3):
+        wait_idle(page)
+        page.get_by_role("button", name="3단계 · 나레이션 + 쇼츠 만들기").click()
+        try:
+            page.get_by_text("🎬 쇼츠 만들기").first.wait_for(timeout=15000)  # 큐에 들어감
+            break
+        except Exception:
+            if page.get_by_role("button", name="⬇️ 다운로드").count():
+                break
     page.get_by_role("button", name="⬇️ 다운로드").wait_for(timeout=900000)
     with page.expect_download() as dl:
         page.get_by_role("button", name="⬇️ 다운로드").first.click()
@@ -599,6 +608,88 @@ def test_restore(page):
           page.get_by_label("제목 (화면 위쪽)").input_value())
     check("카드 순서·나레이션 유지", card_texts(page) == before, card_texts(page))
     check("만든 쇼츠 유지", page.get_by_role("button", name="⬇️ 다운로드").count() == 1)
+
+
+def test_export_import(page, work: Path):
+    """📦 내보내기 → zip 다운로드 (절대 경로 없음) → 「작업 가져오기」에 올리면 새 작업으로 열림 (제목·카드·결과 그대로)."""
+    import zipfile
+
+    title = page.get_by_label("제목 (화면 위쪽)").input_value()
+    before = card_texts(page)
+    page.get_by_role("button", name="📦", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.wait_for(timeout=30000)
+    dialog.get_by_role("button", name="zip 만들기").click()
+    download_button = dialog.get_by_role("button", name=re.compile("⬇️ 다운로드"))
+    download_button.wait_for(timeout=120000)
+    with page.expect_download() as info:
+        download_button.click()
+    zip_path = work / "exported.zip"
+    info.value.save_as(zip_path)
+    with zipfile.ZipFile(zip_path) as z:
+        names = z.namelist()
+        state = z.read("state.json").decode("utf-8")
+    check("내보내기 zip: 올린 영상·분석·결과", "state.json" in names and any(n.startswith("files/source") for n in names)
+          and any(n.startswith("files/results/") for n in names), f"{len(names)}개, {zip_path.stat().st_size // 1024}KB")
+    check("내보내기 zip에 이 PC의 절대 경로가 없음", str(work) not in state and str(work).replace("\\", "\\\\") not in state)
+    check("다운로드해도 팝업이 열려 있음", page.get_by_role("dialog").count() == 1)
+    dialog.get_by_role("button", name="완료").click()
+    page.wait_for_timeout(1500)
+
+    main = page.locator('[data-testid="stMain"]')
+    main.get_by_text("📂 최근 작업").click()
+    page.wait_for_timeout(800)
+    count = len(list((work / "workdir").glob("*/state.json")))
+    page.locator('[class*="st-key-import_file"] input[type=file]').set_input_files(str(zip_path))
+    page.get_by_text("작업을 가져왔습니다").first.wait_for(timeout=60000)
+    page.get_by_text("2단계 · 쇼츠 구성과 나레이션 확인").wait_for(timeout=60000)
+    page.wait_for_timeout(1500)
+    folders = sorted(p.parent.name for p in (work / "workdir").glob("*/state.json"))
+    check("가져오기 → 새 작업 폴더", len(folders) == count + 1 and any(f.endswith("_2") for f in folders), folders)
+    check("가져온 작업: 제목·카드 그대로", page.get_by_label("제목 (화면 위쪽)").input_value() == title
+          and card_texts(page) == before, card_texts(page)[:2])
+    check("가져온 작업: 만든 쇼츠·다운로드", page.get_by_role("button", name="⬇️ 다운로드").count() >= 1)
+    check("가져온 작업: 구간 재생", page.locator('[class*="st-key-cardbox_"] video').count() >= 1)
+
+
+def test_fonts(page, work: Path):
+    """🎬 화면·자막: 글꼴 고르기(미리보기가 바뀜), 한글 글꼴 올리기, 한글 없는 글꼴은 거절."""
+    import shutil
+
+    dialog = open_settings(page, "🎬 화면·자막")
+    box = dialog.get_by_role("combobox", name="글꼴 (자막·제목·썸네일)")
+    check("글꼴 선택 (기본은 자동)", box.count() == 1 and box.input_value().startswith("자동"), box.input_value() if box.count() else "")
+    before = dialog.locator("img").first.get_attribute("src")
+    box.click()
+    options = page.get_by_role("option")
+    names = [o.inner_text() for o in options.all()]
+    pick = next(i for i, n in enumerate(names) if "자동" not in n and "맑은" not in n)  # 자동(맑은 고딕)과 다른 글꼴
+    options.nth(pick).click()
+    page.wait_for_timeout(1500)
+    wait_idle(page, 120000)
+    after = dialog.locator("img").first.get_attribute("src")
+    check("글꼴을 바꾸면 미리보기가 바뀜", after != before, names[:4])
+
+    font = work / "HANDotum.ttf"
+    shutil.copy(Path("C:/Windows/Fonts/HANDotum.ttf"), font)
+    latin = work / "arial.ttf"
+    shutil.copy(Path("C:/Windows/Fonts/arial.ttf"), latin)
+    upload = dialog.locator('[class*="st-key-font_upload"] input[type=file]')
+    upload.set_input_files(str(latin))  # 올리면 바로 보관함에 넣는다
+    page.wait_for_timeout(2500)
+    check("한글 없는 글꼴은 거절", "한글 글자가 없는 글꼴" in page.get_by_role("dialog").inner_text())
+    dialog = page.get_by_role("dialog")
+    dialog.locator('[class*="st-key-font_upload"] input[type=file]').set_input_files(str(font))
+    page.wait_for_timeout(2500)
+    wait_idle(page, 120000)
+    picked = dialog.get_by_role("combobox", name="글꼴 (자막·제목·썸네일)").input_value()
+    check("한글 글꼴 올리기 → 바로 골라짐", "HANDotum" in picked, picked)
+    check("올린 글꼴은 보관함에", any((work / "workdir" / "fonts").glob("up_*.ttf")))
+    dialog.locator('[class*="st-key-font_delete"]').get_by_role("button").click()  # 지우면 자동으로
+    page.wait_for_timeout(2000)
+    picked = page.get_by_role("dialog").get_by_role("combobox", name="글꼴 (자막·제목·썸네일)").input_value()
+    check("올린 글꼴 지우기 → 자동", picked.startswith("자동"), picked)
+    close_settings(page)
 
 
 def test_device_split(page):
@@ -724,10 +815,13 @@ def main():
             test_drag_drop(page, lake, art)
             test_music_upload(page, song)
             if not QUICK:
+                test_fonts(page, work)
+            if not QUICK:
                 test_voice_library(page)
                 test_full_flow(page, lake, work)
                 test_restore(page)
                 test_shared_queue(browser, page)
+                test_export_import(page, work)  # 가져온 작업을 열어 두므로 공용 큐 테스트 뒤에
                 test_resource_monitor(page)
                 test_series_ui(page, combo)
                 test_ai_mode(page, work)

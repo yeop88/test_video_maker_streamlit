@@ -40,6 +40,7 @@ def hf_cache_dir() -> Path:
 CLEARABLE = {
     "gen_cache": ("🎨 AI 장면·음악 캐시", "지우면 2단계 AI 장면 카드의 미리보기가 사라지고, 쇼츠를 만들 때 다시 생성합니다."),
     "preview": ("🖼️ 미리보기 캐시", "화면·자막 미리보기와 카드 세로 미리보기 그림. 지워도 볼 때 다시 그립니다."),
+    "exports": ("📦 내보낸 zip", "「📦 내보내기」로 만든 zip (작업마다 마지막 것만 남김). 다운로드한 뒤에는 지워도 됩니다."),
 }
 
 
@@ -62,7 +63,7 @@ def usage() -> list[dict]:
             rows.append({"key": f"models/{d.name}", "label": f"🧠 양자화 저장본 {d.name}", "path": d, "bytes": b, "files": n,
                          "note": "지우면 다음에 이 모델을 쓸 때 원본에서 다시 양자화합니다 (약 2분, 원본이 Hugging Face 캐시에 있어야 함).",
                          "clear": True})
-    for key, label in (("music", "🎵 배경음악 보관함"), ("voices", "🎙️ 목소리 보관함")):
+    for key, label in (("music", "🎵 배경음악 보관함"), ("voices", "🎙️ 목소리 보관함"), ("fonts", "🔤 글꼴 보관함")):
         b, n = folder_bytes(work / key)
         rows.append({"key": key, "label": label, "path": work / key, "bytes": b, "files": n,
                      "note": "설정 팝업에서 하나씩 지웁니다.", "clear": False})
