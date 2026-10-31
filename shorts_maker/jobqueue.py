@@ -29,8 +29,10 @@ KIND_LABELS = {
     "scene": "🎨 AI 장면",
     "music": "🎵 AI 배경음악",
     "voice": "🔈 목소리 미리 듣기",
+    "upload": "📣 업로드 문구",
 }
-DEFAULT_SEC = {"analyze": 240, "plan": 60, "narrate": 40, "make": 60, "scene": 30, "music": 60, "voice": 15}
+DEFAULT_SEC = {"analyze": 240, "plan": 60, "narrate": 40, "make": 60, "scene": 30, "music": 60, "voice": 15,
+               "upload": 20}
 KEEP_FINISHED = 60  # 끝난 항목은 최근 이만큼만 남긴다 (예상 시간 계산에도 씀)
 
 Report = Callable[..., None]

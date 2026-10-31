@@ -76,6 +76,9 @@ def render(background: bytes | None, title: str, text: str, font_size: int, marg
                             title_style=title_style, title_color=highlight_color)
         media.run_ffmpeg(["-loop", "1", "-framerate", "10", "-t", "2", "-i", "bg.png",
                           "-vf", "ass=p.ass:fontsdir=fonts,trim=start_frame=11", "-frames:v", "1", "frame.png"], cwd=work)
+        # 결과 그림만 남긴다 (글꼴 복사본·배경이 미리보기마다 수 MB씩 쌓였음)
+        shutil.rmtree(work / "fonts", ignore_errors=True)
+        (work / "bg.png").unlink(missing_ok=True)
     image = Image.open(out).convert("RGB")
     if guide:
         image = _guide(image, font_file)

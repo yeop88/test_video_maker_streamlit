@@ -221,6 +221,19 @@ def test_cards(page):
     page.wait_for_timeout(1500)
     check("구간 삭제", cards.count() == n and "추가한 구간" not in card_texts(page), card_texts(page))
 
+    undo = page.get_by_role("button", name=re.compile("↩️ 되돌리기"))
+    undo.first.click()  # 삭제 되돌리기
+    page.wait_for_timeout(1500)
+    check("되돌리기: 지운 카드가 돌아옴", cards.count() == n + 1 and "추가한 구간" in card_texts(page), card_texts(page))
+    undo.first.click()  # 순서 바꾸기 되돌리기
+    page.wait_for_timeout(1500)
+    texts = card_texts(page)
+    check("되돌리기: 순서도 돌아옴", texts[0] == "카드에서 고친 나레이션입니다.", texts[:2])
+    added = cards.filter(has=page.locator("textarea", has_text="추가한 구간"))
+    added.get_by_role("button", name="🗑").click()  # 다음 테스트를 위해 다시 원래대로
+    page.wait_for_timeout(1500)
+    check("되돌린 뒤에도 고칠 수 있음", cards.count() == n, cards.count())
+
 
 def test_music_upload(page, song: Path):
     """설정 팝업 「소리·배경음악」: 음악 올리기 → 보관함에 넣기 → 선택되고 미리 듣기가 보임."""
@@ -388,6 +401,19 @@ def test_results_history(page):
     results.nth(1).get_by_role("button", name="🗑").click()
     page.wait_for_timeout(2000)
     check("결과 지우기", results.count() == 1 and "인준" in results.first.inner_text())
+
+    # 업로드 문구: 큐에서 LLM이 제목 후보 3개·설명·해시태그를 쓰고 복사할 수 있게 보여 줌
+    results.first.get_by_text("📣 업로드 문구").click()
+    page.wait_for_timeout(800)
+    results.first.get_by_role("button", name="✍️ 업로드 문구 쓰기").click()
+    t = time.time()
+    page.wait_for_function("document.querySelectorAll('[class*=\"st-key-result_\"] [data-testid=\"stCode\"]').length >= 5",
+                           timeout=300000)
+    page.wait_for_timeout(1000)
+    codes = [c.inner_text().strip() for c in results.first.locator('[data-testid="stCode"]').all()]
+    check("업로드 문구: 제목 후보 3개·설명·해시태그", len(codes) == 5 and codes[4].startswith("#Shorts"),
+          f"{time.time() - t:.0f}초, {codes}")
+    check("업로드 문구 복사 버튼", results.first.locator('[data-testid="stCode"] button').count() >= 1)
 
 
 def test_series_ui(page, combo: Path):
@@ -617,6 +643,37 @@ def test_delete_recent(page, work: Path):
     dialog = page.get_by_role("dialog")
     dialog.wait_for(timeout=30000)
     check("지우기 전에 확인 팝업", "작업을 지울까요?" in dialog.inner_text())
+    dialog.get_by_role("button", name="취소").click()
+    page.wait_for_timeout(1500)
+
+    # 저장 공간: 항목별 크기, 미리보기 캐시 지우기
+    if page.get_by_role("button", name="🧹 저장 공간 보기").count() == 0:
+        main.get_by_text("📂 최근 작업").click()
+        page.wait_for_timeout(800)
+    page.get_by_role("button", name="🧹 저장 공간 보기").click()
+    dialog = page.get_by_role("dialog")
+    dialog.wait_for(timeout=60000)
+    dialog.get_by_text("목소리 보관함").wait_for(timeout=60000)  # 크기를 다 잰 뒤에 항목이 나옴
+    page.wait_for_timeout(500)
+    found = {k: dialog.get_by_text(k).count() for k in ("📂 작업", "미리보기 캐시", "AI 장면·음악 캐시", "목소리 보관함", "드라이브 남은 공간")}
+    check("저장 공간: 작업·캐시·보관함 크기", all(found.values()), found)
+    preview_dir = work / "workdir" / "preview"
+    had = any(preview_dir.rglob("*.png"))
+    clear_preview = dialog.locator('[class*="st-key-clear_preview"]').get_by_role("button")
+    if had and clear_preview.is_enabled():
+        clear_preview.click()
+        page.wait_for_timeout(2500)
+        check("미리보기 캐시 지우기", not any(preview_dir.rglob("*.png")) and "지웠습니다" in dialog.inner_text())
+    else:
+        check("미리보기 캐시 지우기", False, f"그림 있음={had}, 버튼 사용 가능={clear_preview.is_enabled()}")
+    dialog.get_by_role("button", name="완료").click()
+    page.wait_for_timeout(1500)
+    if page.locator('[class*="st-key-delrecent_"]').count() == 0:
+        main.get_by_text("📂 최근 작업").click()
+        page.wait_for_timeout(800)
+    page.locator(f'[class*="st-key-delrecent_{folder}"]').get_by_role("button").click()
+    dialog = page.get_by_role("dialog")
+    dialog.wait_for(timeout=30000)
     dialog.get_by_role("button", name="취소").click()
     page.wait_for_timeout(2000)
     check("취소하면 그대로", (work / "workdir" / folder).exists())

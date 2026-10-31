@@ -238,6 +238,7 @@ def make(item: dict, report) -> dict:
             "id": project.new_id(), "short_id": short_id, "title": title, "video": str(video), "report": rep,
             "created": project.now(), "duration": round(media.probe(video).duration, 1),
             "summary": settings_summary(s, cards), "owner": item.get("owner", ""),
+            "script": " ".join(c["narration"].strip() for c in clips if c.get("narration", "").strip()),
         }
         prompts = {c["uid"]: (c.get("prompt"), c.get("prompt_src")) for c in cards if c.get("kind") == "ai"}
 
@@ -250,6 +251,31 @@ def make(item: dict, report) -> dict:
         project.update(folder, apply)
         made.append(result["id"])
     return {"results": made}
+
+
+def upload_text(item: dict, report) -> dict:
+    """만든 쇼츠의 업로드 제목 후보·설명·해시태그를 써서 결과 기록에 붙인다."""
+    s, p = _settings(item), item["params"]
+    folder = _folder(item)
+    proj = project.load(folder)
+    result = next((r for r in proj.results if r["id"] == p["result_id"]), None)
+    if result is None:
+        raise RuntimeError("이 결과가 지워졌습니다.")
+    script = result.get("script", "")
+    if not script:  # 이전 버전 결과: 지금 카드의 나레이션
+        short = next((x for x in proj.shorts if x["id"] == result.get("short_id")), None)
+        script = " ".join(c["narration"] for c in (short or {}).get("clips", []) if c.get("narration"))
+    if not script.strip() and not result["title"].strip():
+        raise RuntimeError("나레이션과 제목이 없어 업로드 문구를 쓸 수 없습니다.")
+    report(line=f"📣 {s['llm_model']}(으)로 제목 후보·설명·해시태그 쓰기")
+    text = llm.write_upload_text(s["llm_model"], result["title"], script).model_dump()
+
+    def apply(pr: project.Project) -> None:
+        for r in pr.results:
+            if r["id"] == p["result_id"]:
+                r["upload"] = text
+    project.update(folder, apply)
+    return {}
 
 
 # ───────────── AI 장면·음악·목소리 ─────────────
@@ -308,4 +334,4 @@ def voice_preview(item: dict, report) -> dict:
 
 
 jobqueue.HANDLERS.update(analyze=analyze, plan=plan, narrate=narrate, make=make, scene=scene, music=ai_music,
-                         voice=voice_preview)
+                         voice=voice_preview, upload=upload_text)

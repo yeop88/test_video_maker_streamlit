@@ -1,4 +1,5 @@
 """AI 쇼츠 나레이션 스튜디오 — 영상을 이해해 하이라이트를 고르고, AI 나레이션과 한글 자막을 입혀 쇼츠로 만든다."""
+import copy
 import hashlib
 import time
 import uuid
@@ -11,7 +12,7 @@ import streamlit as st
 
 import shorts_maker
 from shorts_maker import (config, generate, jobqueue, llm, media, music, pipeline, presets, preview, project, subtitles,
-                          system, tasks, tts, voices)
+                          storage, system, tasks, tts, voices)
 
 st.set_page_config(page_title="AI 쇼츠 나레이션 스튜디오", page_icon="🎬", layout="wide")
 
@@ -894,6 +895,38 @@ def confirm_delete_recent(folder: Path, name: str, results: int) -> None:
         st.rerun()
 
 
+@st.cache_data(show_spinner="디스크 사용량을 재는 중…", ttl=30)
+def storage_usage(rev: int) -> list[dict]:
+    return storage.usage()
+
+
+@st.dialog("🧹 저장 공간", width="large")
+def storage_dialog() -> None:
+    """workdir에서 무엇이 얼마나 차지하는지, 다시 만들 수 있는 캐시 지우기."""
+    show_message()
+    free, total = storage.disk_free()
+    st.progress(1 - free / total, text=f"드라이브 남은 공간 {storage.human(free)} / {storage.human(total)}")
+    busy = any(q["status"] in (jobqueue.WAITING, jobqueue.RUNNING) for q in jobqueue.items())
+    rows = storage_usage(ss.get("storage_rev", 0))
+    for row in rows:
+        col_name, col_size, col_btn = st.columns([5, 1.4, 1.2], vertical_alignment="center")
+        col_name.markdown(f"**{row['label']}**")
+        col_name.caption(row["note"])
+        col_size.markdown(f"{storage.human(row['bytes'])}  \n<small>파일 {row['files']:,}개</small>", unsafe_allow_html=True)
+        if row["clear"] and col_btn.button("지우기", key=f"clear_{row['key']}", disabled=busy or not row["bytes"],
+                                           width="stretch", help="작업 큐가 쉴 때만 지울 수 있습니다." if busy else None):
+            try:
+                freed = storage.clear(row["key"])
+                ss.preset_msg = ("success", f"{row['label']} {storage.human(freed)}를 지웠습니다.")
+            except (RuntimeError, ValueError) as e:
+                ss.preset_msg = ("error", str(e))
+            ss.storage_rev = ss.get("storage_rev", 0) + 1
+            st.rerun(scope="fragment")
+    if busy:
+        st.caption("작업 큐가 도는 동안에는 캐시를 지울 수 없습니다 (만드는 중인 장면이 지워지지 않게).")
+    close_button()
+
+
 recent_items = project.recent(limit=50)
 with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
     if not recent_items:
@@ -909,6 +942,9 @@ with st.expander(f"📂 최근 작업 ({len(recent_items)})", expanded=False):
             col_open.button("열기", key=f"open_{item['dir'].name}", on_click=open_recent, args=(item["dir"],))
             if col_del.button("🗑", key=f"delrecent_{item['dir'].name}", help="이 작업 지우기 (확인 후)"):
                 confirm_delete_recent(item["dir"], item["name"], item["results"])
+    if st.button("🧹 저장 공간 보기", help="작업·캐시·모델이 디스크를 얼마나 쓰는지 보고, 다시 만들 수 있는 캐시를 지웁니다."):
+        ss.storage_rev = ss.get("storage_rev", 0) + 1  # 열 때마다 새로 잼
+        storage_dialog()
 
 st.radio("만드는 방식", list(MODE_LABELS), format_func=MODE_LABELS.get, horizontal=True, key="mode",
          on_change=close_project, label_visibility="collapsed")
@@ -1108,8 +1144,32 @@ def sync_cards(short: dict) -> None:
                 clip[field] = ss[key]
 
 
+UNDO_LIMIT = 20
+
+
+def remember(short: dict) -> None:
+    """되돌리기용으로 이 쇼츠의 지금 제목·카드를 기억한다 (브라우저 세션마다, 쇼츠마다 최근 UNDO_LIMIT개)."""
+    stack = ss.setdefault("undo", {}).setdefault(short["id"], [])
+    snap = {"title": short["title"], "clips": copy.deepcopy(short["clips"])}
+    if not stack or stack[-1] != snap:
+        stack.append(snap)
+        del stack[:-UNDO_LIMIT]
+
+
+def undo(p: project.Project, short: dict) -> None:
+    stack = ss.get("undo", {}).get(short["id"])
+    if not stack:
+        return
+    snap = stack.pop()
+    short["title"], short["clips"] = snap["title"], snap["clips"]
+    project.save(p)
+    refresh_cards()
+    ss.flash = "↩️ 되돌렸습니다."
+
+
 def card_action(p: project.Project, short: dict, uid: str, action: str) -> None:
     sync_cards(short)
+    remember(short)
     items = short["clips"]
     i = next(k for k, c in enumerate(items) if c["uid"] == uid)
     if action == "up" and i > 0:
@@ -1124,6 +1184,7 @@ def card_action(p: project.Project, short: dict, uid: str, action: str) -> None:
 
 def add_card(p: project.Project, short: dict, duration: float) -> None:
     sync_cards(short)
+    remember(short)
     source = [c for c in short["clips"] if c.get("kind") != "ai"]
     start = source[-1]["end"] if source else 0.0
     start = min(start, max(0.0, duration - 5.0))
@@ -1135,6 +1196,7 @@ def add_card(p: project.Project, short: dict, duration: float) -> None:
 
 def add_ai_card(p: project.Project, short: dict) -> None:
     sync_cards(short)
+    remember(short)
     short["clips"].append({"uid": project.new_id(), "kind": "ai", "prompt_ko": "", "prompt": "", "engine": "image",
                            "seed": int(project.new_id()[:4], 16), "seconds": 5.0, "narration": ""})
     project.save(p)
@@ -1238,6 +1300,7 @@ def ai_card(p: project.Project, short: dict, clip: dict, i: int) -> None:
             narration = st.text_area("나레이션 (자막)", clip["narration"], height=90, key=card_key(uid, "narration"))
             st.caption(f"{len(narration)}자 / 권장 {int(seconds * config.NARRATION_CHARS_PER_SECOND)}자")
     if (engine, seconds, prompt_ko, narration) != (clip.get("engine"), clip.get("seconds"), clip.get("prompt_ko"), clip["narration"]):
+        remember(short)
         if engine != clip.get("engine") or prompt_ko != clip.get("prompt_ko"):
             clip.pop("preview", None)  # 설명이나 방식을 바꾸면 미리보기는 다시 만들어야 함
         clip.update(engine=engine, seconds=seconds, prompt_ko=prompt_ko, narration=narration)
@@ -1303,6 +1366,7 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None, vertic
                 else:
                     st.caption(note)
         if (start, end, narration) != (clip["start"], clip["end"], clip["narration"]):
+            remember(short)
             clip.update(start=start, end=end, narration=narration)  # 고친 값을 바로 저장 (새로고침해도 남음)
             project.save(p)
     col_add, col_add_ai = st.columns(2)
@@ -1422,8 +1486,10 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
     sid = short["id"]
     col_title, col_replan = st.columns([3, 1])
     with col_title:
-        title = st.text_input("제목 (화면 위쪽)", value=short["title"], disabled=not show_title, key=f"title_{sid}")
+        title = st.text_input("제목 (화면 위쪽)", value=short["title"], disabled=not show_title,
+                              key=f"title{ss.card_rev}_{sid}")
         if title != short["title"]:
+            remember(short)
             short["title"] = title
             project.save(p)
         if len(p.shorts) > 1 and short.get("range"):
@@ -1435,15 +1501,23 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
                         "🔄 이 쇼츠 다시 구성" if len(p.shorts) > 1 else "🔄 구성 다시 만들기")
         if st.button(replan_label, key=f"replan_{sid}", disabled=llm_model is None,
                      help="같은 분석 결과로 이 쇼츠의 구간과 나레이션을 다시 만듭니다. 「🧠 대본·구성」의 말투·길이가 반영됩니다. "
-                          "공용 작업 큐에 들어갑니다."):
+                          "공용 작업 큐에 들어갑니다. 마음에 들지 않으면 「↩️ 되돌리기」로 돌아올 수 있습니다."):
+            remember(short)
             enqueue_plan(p, short)
             st.rerun()
 
     timeline(short, job)
-    vertical = job is not None and st.toggle(
+    col_vertical, col_undo = st.columns([3, 1], vertical_alignment="center")
+    vertical = job is not None and col_vertical.toggle(
         "📱 카드를 세로 화면 미리보기로 보기", key=f"vertical_{sid}",
         help="원본 구간 카드에 영상 대신, 지금 화면·자막 설정으로 그린 쇼츠 모습(구간 시작 장면 + 제목 + 나레이션)을 보여 줍니다.")
+    undo_slot = col_undo.empty()  # 카드에서 고친 것까지 세려고 카드를 그린 뒤에 채운다
     raw_clips = clip_cards(p, short, job, vertical)
+    undo_count = len(ss.get("undo", {}).get(sid, []))
+    undo_slot.button(f"↩️ 되돌리기 ({undo_count})", key=f"undo_{sid}", disabled=not undo_count, width="stretch",
+                     on_click=undo, args=(p, short),
+                     help="제목·카드를 고치기 전으로 한 단계씩 돌아갑니다 (순서 바꾸기·추가·삭제, 시간·나레이션 수정, "
+                          "구성·나레이션 다시 만들기). 이 브라우저에서 고친 것만, 최근 20번까지.")
     # 쇼츠를 만들 때 쓰는 카드 (원본 구간은 범위 맞춤, 대사 경계, 겹침 합치기)
     clips = pipeline.normalize_clips(job, raw_clips) if job else raw_clips
 
@@ -1465,6 +1539,7 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
             help="카드의 구간 시간은 그대로 두고, 구간마다 그 시간의 장면·대사를 보고 나레이션을 새로 씁니다. "
                  "공용 작업 큐에 들어갑니다.",
         ):
+            remember(short)
             enqueue("narrate", f"{p.name} · '{short['title'][:20]}' 나레이션", {"short_id": sid}, p,
                     key=f"narrate:{p.dir.name}:{sid}")
             st.rerun()
@@ -1532,6 +1607,30 @@ def delete_result(p: project.Project, result_id: str) -> None:
     ss.flash = "결과를 지웠습니다."
 
 
+def upload_box(p: project.Project, result: dict) -> None:
+    """업로드할 때 쓸 제목 후보·설명·해시태그 (오른쪽 위 📋로 복사). 없으면 큐에 넣어 LLM이 쓴다."""
+    text = result.get("upload")
+    key = f"upload:{p.dir.name}:{result['id']}"
+    item = next((q for q in jobqueue.items() if jobqueue.same_task(q, "upload", key)), None)
+    with st.expander("📣 업로드 문구 (제목·설명·해시태그)", expanded=bool(text)):
+        if text:
+            st.caption("제목 후보 · 오른쪽 위 📋로 복사")
+            for t in text["titles"]:
+                st.code(t, language=None, wrap_lines=True)
+            st.caption("설명")
+            st.code(text["description"], language=None, wrap_lines=True)
+            st.caption("해시태그")
+            st.code(" ".join(text["hashtags"]), language=None, wrap_lines=True)
+            st.caption("AI가 쓴 글이라 사실과 다를 수 있으니 올리기 전에 확인하세요.")
+        if item is not None:
+            st.caption(f"⏳ {jobqueue.STATUS_LABELS[item['status']]} · 위 「🚦 작업 큐」")
+        elif st.button("🔄 다시 쓰기" if text else "✍️ 업로드 문구 쓰기", key=f"upload_{result['id']}",
+                       disabled=llm_model is None, width="stretch",
+                       help="이 쇼츠의 제목과 나레이션으로 업로드 제목 후보 3개, 설명, 해시태그를 씁니다. 공용 작업 큐에 들어갑니다."):
+            enqueue("upload", f"{p.name} · '{result['title'][:20]}' 업로드 문구", {"result_id": result["id"]}, p, key=key)
+            st.rerun()
+
+
 RESULTS_PER_ROW = 3
 if proj.results:
     st.divider()
@@ -1574,5 +1673,6 @@ if proj.results:
                     if extra.exists():
                         col_x.download_button(f"⬇️ {label}", data=extra.read_bytes(), key=f"dl{suffix}_{result['id']}",
                                               file_name=f"{Path(proj.name).stem}_{stamp}{suffix}", mime=mime, width="stretch")
+                upload_box(proj, result)
                 with st.expander("구간별 나레이션 길이"):
                     st.dataframe(result["report"], hide_index=True, width="stretch")

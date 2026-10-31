@@ -227,6 +227,62 @@ def write_script(model: str, topic: str, target_sec: float, style: str, attempts
     return script
 
 
+UPLOAD_PROMPT = """당신은 유튜브 쇼츠·인스타그램 릴스 운영자입니다. 완성된 쇼츠의 제목과 나레이션을 보고, 올릴 때 쓸 글을 쓰세요.
+
+규칙:
+- titles: 업로드 제목 후보 3개. 각각 한글 위주 40자 이내, 서로 다른 느낌(궁금증 / 정보 요약 / 감성 등). 낚시성 과장 금지.
+- description: 설명란 글. 2~3문장, 200자 이내. 영상 내용을 요약하고 마지막에 가벼운 질문이나 권유 한 문장.
+- hashtags: 해시태그 5~8개. 각각 #으로 시작하고 띄어쓰기 없이. 첫 번째는 #Shorts, 나머지는 내용에 맞는 한국어 위주.
+- 나레이션과 제목에 없는 숫자·통계·사람 이름·장소 이름·날짜는 지어내지 마세요."""
+
+
+class UploadText(BaseModel):
+    titles: list[str]
+    description: str
+    hashtags: list[str]
+
+
+def write_upload_text(model: str, title: str, script: str, attempts: int = 3) -> UploadText:
+    """완성된 쇼츠의 업로드 제목 후보 3개, 설명, 해시태그."""
+    messages = [
+        {"role": "system", "content": UPLOAD_PROMPT},
+        {"role": "user", "content": f"화면 제목: {title.strip() or '(없음)'}\n\n나레이션:\n{script.strip()}"},
+    ]
+    source = f"{title} {script}"
+
+    def check(answer: UploadText) -> list[str]:
+        problems = []
+        if len(answer.titles) != 3:
+            problems.append(f"titles가 {len(answer.titles)}개입니다. 정확히 3개로 쓰세요.")
+        for t in answer.titles:
+            if len(t) > 45 or len(re.findall(r"[가-힣]", t)) < 4 or FOREIGN_SCRIPT.search(t):
+                problems.append(f"제목 「{t}」을 한글 위주 40자 이내로 고치세요.")
+        if not answer.description.strip() or len(answer.description) > 260 or FOREIGN_SCRIPT.search(answer.description):
+            problems.append(f"description이 {len(answer.description)}자입니다. 한글로 200자 이내로 쓰세요.")
+        tags = [h.strip() for h in answer.hashtags]
+        if not 5 <= len(tags) <= 8:
+            problems.append(f"hashtags가 {len(tags)}개입니다. 5~8개로 쓰세요.")
+        bad = [h for h in tags if not re.fullmatch(r"#[^\s#]{1,30}", h)]
+        if bad:
+            problems.append(f"해시태그 {', '.join(bad)}를 #으로 시작하고 띄어쓰기 없이 쓰세요.")
+        written = " ".join(answer.titles + [answer.description] + tags)
+        invented = number_values(written) - number_values(source) - {1}
+        if invented:
+            problems.append(f"나레이션에 없는 숫자 {', '.join(map(str, sorted(invented)))}를 쓰지 마세요.")
+        return problems
+
+    answer = _ask_until_ok(model, messages, UploadText, check, attempts)
+    if answer is None:
+        raise RuntimeError("업로드 문구를 만들지 못했습니다. 다시 시도하세요.")
+    tags = []
+    for h in ["#Shorts"] + [h.strip() for h in answer.hashtags]:
+        h = "#" + re.sub(r"[\s#]+", "", h)
+        if len(h) > 1 and h.lower() not in {t.lower() for t in tags}:
+            tags.append(h)
+    return UploadText(titles=[tidy(t) for t in answer.titles[:3]], description=answer.description.strip(),
+                      hashtags=tags[:8])
+
+
 TOPIC_PROMPT = """당신은 긴 영상을 여러 편의 쇼츠로 나누는 편집자입니다.
 타임라인(장면 설명과 대사)을 보고, 서로 다른 주제의 쇼츠 {count}편을 만들 수 있게 원본을 {count}부분으로 나누세요.
 
