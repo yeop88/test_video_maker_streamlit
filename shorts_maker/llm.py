@@ -164,9 +164,14 @@ SCRIPT_PROMPT = """당신은 유튜브 쇼츠·인스타그램 릴스 작가입�
   - 장면이 이어지는 하나의 이야기처럼.
   - 주제에 없는 구체적인 숫자·통계·사람 이름·날짜는 지어내지 마세요. 확실하지 않은 사실은 쓰지 마세요.
   - 한글로만 쓰세요. 한자, 일본어, 영어 문장은 쓰지 마세요.
-- visual_ko: 그 장면에 보일 그림을 한국어 한 문장으로 (사람이 읽고 고칠 설명).
+- subject: 이 쇼츠의 주인공 피사체를 영어 명사구 하나로 (예: commercial airliner, kimchi fried rice, tabby cat,
+  autumn mountain lake). 주제에서 화면에 꼭 보여야 하는 것입니다.
+- visual_ko: 그 장면에 보일 그림을 한국어 한 문장으로 (사람이 읽고 고칠 설명). 주인공 피사체가 보이게.
 - visual: 같은 그림을 이미지 생성 모델용 영어 프롬프트로 (피사체, 장소, 행동, 빛, 구도, 40단어 이내).
-  그림 안에 글자·로고·워터마크가 나오지 않게. 장면마다 그림이 서로 달라야 합니다.
+  - 생성 모델은 장면마다 따로 그려서 주제를 모릅니다. 모든 visual에 subject의 낱말을 그대로 넣고,
+    주인공 피사체가 화면에 크게, 분명히 보이게 쓰세요. 사람 얼굴·손만, 빈 풍경만, 컴퓨터 화면만 나오는 장면은 쓰지 마세요.
+  - 뜻이 여러 가지인 낱말 대신 구체적인 이름을 쓰세요 (예: "engine block" 대신 "turbofan jet engine mounted on the airliner wing").
+  - 그림 안에 글자·로고·워터마크가 나오지 않게. 장면마다 그림이 서로 달라야 합니다.
 - title: 화면 위쪽 제목. 한글 15자 이내.
 - 말투: {style}"""
 
@@ -180,7 +185,33 @@ class Scene(BaseModel):
 
 class Script(BaseModel):
     title: str
+    subject: str = ""
     scenes: list[Scene]
+
+
+SUBJECT_STOP = {"a", "an", "the", "of", "and", "with", "in", "on", "for", "to", "its", "their"}
+
+
+def subject_words(subject: str) -> list[str]:
+    """주인공 피사체 명사구에서 프롬프트에 있는지 볼 낱말 (관사·전치사 제외, 3글자 이상)."""
+    return [w for w in re.findall(r"[a-z]+", subject.lower()) if len(w) >= 3 and w not in SUBJECT_STOP]
+
+
+def has_subject(prompt: str, subject: str) -> bool:
+    """영어 프롬프트에 주인공 피사체가 들어 있는지 (명사구의 핵심 낱말 = 마지막 낱말, 또는 낱말 절반 이상)."""
+    words = subject_words(subject)
+    if not words:
+        return True
+    found = [w for w in words if re.search(rf"\b{w}", prompt.lower())]
+    return words[-1] in found or len(found) * 2 >= len(words)
+
+
+def anchor_subject(prompt: str, subject: str) -> str:
+    """주인공 피사체가 빠진 프롬프트 앞에 피사체를 붙인다 (생성 모델은 장면마다 따로 그려 주제를 모름)."""
+    prompt = prompt.strip()
+    if not subject.strip() or has_subject(prompt, subject):
+        return prompt
+    return f"{subject.strip()}, {prompt}"
 
 
 def write_script(model: str, topic: str, target_sec: float, style: str, attempts: int = 3) -> Script:
@@ -209,6 +240,13 @@ def write_script(model: str, topic: str, target_sec: float, style: str, attempts
                 problems.append(f"{i}번 장면 나레이션이 {len(s.narration)}자로 너무 깁니다 ({int(s.seconds * cps)}자 이내).")
             if re.search(r"[가-힣]", s.visual) or not s.visual.strip():
                 problems.append(f"{i}번 장면 visual을 영어로만 쓰세요.")
+        if not subject_words(script.subject) or re.search(r"[가-힣]", script.subject):
+            problems.append("subject에 주인공 피사체를 영어 명사구로 쓰세요 (예: commercial airliner).")
+        else:
+            missing = [i for i, s in enumerate(scenes) if not has_subject(s.visual, script.subject)]
+            if missing:
+                problems.append(f"{', '.join(map(str, missing))}번 장면 visual에 주인공 피사체 '{script.subject}'가 없습니다. "
+                                "그 낱말을 넣고 피사체가 화면에 분명히 보이게 다시 쓰세요.")
         if len(re.findall(r"[가-힣]", script.title)) < 4 or FOREIGN_SCRIPT.search(script.title):
             problems.append("title을 내용을 담은 한글 제목(4~15자)으로 쓰세요.")
         # 주제에 없는 숫자("5분", "3가지")를 지어내지 않게 ("한 번"의 1은 허용)
@@ -222,8 +260,10 @@ def write_script(model: str, topic: str, target_sec: float, style: str, attempts
     if script is None or not script.scenes:
         raise RuntimeError("대본을 만들지 못했습니다. 주제를 조금 더 구체적으로 쓰거나 다시 시도하세요.")
     script.title = tidy(script.title)
+    script.subject = script.subject.strip() if not re.search(r"[가-힣]", script.subject) else ""
     for s in script.scenes:
         s.narration, s.seconds = tidy(s.narration), float(min(8.0, max(3.0, s.seconds)))
+        s.visual = anchor_subject(s.visual, script.subject)  # 다시 받아도 빠졌으면 앞에 붙임
     return script
 
 
@@ -490,17 +530,28 @@ Turn the user's request (often Korean) into one short English prompt: genre, moo
 Instrumental only, no vocals. Under 25 words. Output only the prompt."""
 
 
-def english_prompt(model: str, text: str, kind: str = "visual") -> str:
-    """장면·음악 설명을 생성 모델용 영어 프롬프트로. 이미 영어면 그대로 쓴다."""
+def english_prompt(model: str, text: str, kind: str = "visual", subject: str = "") -> str:
+    """장면·음악 설명을 생성 모델용 영어 프롬프트로. 이미 영어면 그대로 쓴다.
+    subject(쇼츠의 주인공 피사체, 영어)를 주면 장면 프롬프트에 꼭 들어가게 한다 (사람이 장면 설명을 고친 경우)."""
     text = text.strip()
     if not text or not re.search(r"[가-힣]", text):
-        return text
+        return anchor_subject(text, subject) if kind == "visual" else text
     system = VISUAL_PROMPT if kind == "visual" else MUSIC_PROMPT
+    if kind == "visual" and subject.strip():
+        system += f"\nThe main subject of the whole video is: {subject.strip()}. It must be clearly visible; name it in the prompt."
+
+    def check(r: PromptText) -> list[str]:
+        if re.search(r"[가-힣]", r.prompt) or not r.prompt.strip():
+            return ["영어로만 쓰세요."]
+        if kind == "visual" and not has_subject(r.prompt, subject):
+            return [f"Include the main subject '{subject}' in the prompt."]
+        return []
+
     result = _ask_until_ok(
-        model, [{"role": "system", "content": system}, {"role": "user", "content": text}], PromptText,
-        lambda r: ["영어로만 쓰세요."] if re.search(r"[가-힣]", r.prompt) or not r.prompt.strip() else [], 3,
+        model, [{"role": "system", "content": system}, {"role": "user", "content": text}], PromptText, check, 3,
     )
-    return result.prompt.strip() if result and not re.search(r"[가-힣]", result.prompt) else text
+    prompt = result.prompt.strip() if result and not re.search(r"[가-힣]", result.prompt) else text
+    return anchor_subject(prompt, subject) if kind == "visual" else prompt
 
 
 ORDINAL_WORDS = {"첫": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7}

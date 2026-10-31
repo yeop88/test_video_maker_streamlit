@@ -16,6 +16,7 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -245,7 +246,9 @@ class Cancelled(RuntimeError):
     pass
 
 
-GPU_LOCK = threading.Lock()  # 생성 프로세스들이 한 번에 하나만 GPU를 쓰게
+# 모듈을 다시 불러와도(Streamlit이 파일 변경 시) 생성 프로세스·GPU 잠금은 프로세스에 하나만 (jobqueue._STATE와 같은 이유)
+_SHARED: dict = sys.__dict__.setdefault("_shorts_generate", {})
+GPU_LOCK = _SHARED.setdefault("gpu_lock", threading.Lock())  # 생성 프로세스들이 한 번에 하나만 GPU를 쓰게
 
 
 class GenService:
@@ -373,8 +376,8 @@ class GenService:
         return False
 
 
-service = GenService("gen", GEN_PYTHON, {"image", "video", "music"})
-ltx_service = GenService("ltx", LTX_PYTHON, {"ltx25", "flux2"})
+service = _SHARED.setdefault("service", GenService("gen", GEN_PYTHON, {"image", "video", "music"}))
+ltx_service = _SHARED.setdefault("ltx_service", GenService("ltx", LTX_PYTHON, {"ltx25", "flux2"}))
 SERVICES = [service, ltx_service]
 
 
@@ -393,9 +396,11 @@ def cancel() -> None:
             s.cancel()
 
 
-def stop_idle() -> None:
-    service.stop_if_idle(IDLE_STOP_SEC)
-    ltx_service.stop_if_idle(LTX_IDLE_STOP_SEC)
+def stop_idle(now: bool = False) -> None:
+    """한동안 쓰지 않은 생성 프로세스를 끈다. now=True면 기다리지 않고 지금 쉬고 있는 것을 모두 끈다
+    (LLM·음성 작업 전에: 쉬는 LTX-2.5 프로세스도 GPU 메모리 몇 GB를 잡고 있어 Ollama와 합치면 16GB를 넘었음)."""
+    service.stop_if_idle(0 if now else IDLE_STOP_SEC)
+    ltx_service.stop_if_idle(0 if now else LTX_IDLE_STOP_SEC)
 
 
 def set_task_devices(devices: dict) -> None:
@@ -435,13 +440,22 @@ def scene_job(scene: dict) -> tuple[str, dict, Path]:
     return "image", {**task, "negative": NEGATIVE, "scheduler": model.get("scheduler", "")}, out
 
 
+def scene_size(scene: dict) -> tuple[int, int]:
+    """장면 클립 크기 (쇼츠 출력 크기, 기본 1080x1920)."""
+    size = scene.get("size")
+    return (int(size[0]), int(size[1])) if size else config.OUTPUT_SIZE
+
+
 def scene_clip_path(scene: dict) -> Path:
-    """장면의 최종 클립 경로 (이미지는 길이별 움직임 클립, 영상은 생성 결과 그대로)."""
+    """장면의 최종 클립 경로 (이미지는 길이·크기별 움직임 클립, 영상은 생성 결과 그대로).
+    "_fit": 그림 비율을 지켜 자르는 지금 방식 (예전 클립은 그림을 화면 비율로 늘려 좌우로 눌려 보였음)."""
     kind, _, out = scene_job(scene)
     if kind not in ("image", "flux2"):
         return out
     seconds = round(float(scene.get("seconds", 5.0)), 1)
-    return out.with_name(f"{out.stem}_{seconds}s_m{int(scene.get('seed', 0)) % 6}.mp4")
+    w, h = scene_size(scene)
+    tag = "" if (w, h) == tuple(config.OUTPUT_SIZE) else f"_{w}x{h}"
+    return out.with_name(f"{out.stem}_{seconds}s_m{int(scene.get('seed', 0)) % 6}_fit{tag}.mp4")
 
 
 def cached_clip(scene: dict) -> Path | None:
@@ -460,19 +474,21 @@ def finish_scene(scene: dict) -> Path:
     kind, _, out = scene_job(scene)
     clip = scene_clip_path(scene)
     if kind in ("image", "flux2") and not clip.exists():
-        image_to_clip(out, round(float(scene.get("seconds", 5.0)), 1), clip, motion=int(scene.get("seed", 0)))
+        image_to_clip(out, round(float(scene.get("seconds", 5.0)), 1), clip, motion=int(scene.get("seed", 0)),
+                      size=scene_size(scene))
     return clip
 
 
-def image_to_clip(image: Path, seconds: float, out: Path, motion: int = 0) -> None:
-    """정지 이미지를 천천히 확대·이동하는 1080x1920 클립으로 (켄 번스 효과). motion으로 방향을 바꾼다."""
-    w, h = config.OUTPUT_SIZE
+def image_to_clip(image: Path, seconds: float, out: Path, motion: int = 0, size: tuple[int, int] | None = None) -> None:
+    """정지 이미지를 천천히 확대·이동하는 클립으로 (켄 번스 효과, 기본 1080x1920). motion으로 방향을 바꾼다.
+    그림은 비율을 지켜 화면을 채우고 넘치는 쪽을 가운데 기준으로 자른다 (늘려서 맞추면 피사체가 눌려 보임)."""
+    w, h = size or config.OUTPUT_SIZE
     frames = max(1, int(round(seconds * 30)))
     zoom = "min(zoom+0.0009,1.18)" if motion % 2 == 0 else "if(eq(on,0),1.18,max(zoom-0.0009,1.0))"
     x = ["iw/2-(iw/zoom/2)", "(iw-iw/zoom)*on/{f}", "(iw-iw/zoom)*(1-on/{f})"][motion % 3].format(f=frames)
     media.run_ffmpeg([
         "-loop", "1", "-i", str(image),
-        "-vf", f"scale={w * 2}:{h * 2},zoompan=z='{zoom}':x='{x}':y='ih/2-(ih/zoom/2)':d={frames}:s={w}x{h}:fps=30,"
+        "-vf", f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},zoompan=z='{zoom}':x='{x}':y='ih/2-(ih/zoom/2)':d={frames}:s={w}x{h}:fps=30,"
                "format=yuv420p",
         "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", str(out),
     ])

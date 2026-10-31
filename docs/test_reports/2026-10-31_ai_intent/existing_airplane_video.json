@@ -1,0 +1,50 @@
+[
+ {
+  "scene": 1,
+  "prompt_ko": "복잡한 컴퓨터 모델링 화면 속에서 비행기의 날개와 몸체 모양이 3D로 회전하며 변하는 장면.",
+  "prompt": "complex computer modeling screen, 3D airplane wing and fuselage shape rotating and changing, digital interface elements, cool blue lighting, close-up shot of the model",
+  "what_is_shown": "A close-up of a blue airplane engine nozzle with blurred structural elements in the background.",
+  "subject_visible": true,
+  "matches_scene": false
+ },
+ {
+  "scene": 2,
+  "prompt_ko": "공장 내부에서 로봇 팔이 얇은 금속 시트를 정교하게 접고 조립하는 장면.",
+  "prompt": "industrial factory interior, robotic arm precisely folding thin metal sheets to build a frame, metallic textures, bright overhead lighting, medium shot showing the construction process",
+  "what_is_shown": "A metallic frame structure being assembled by a robotic arm inside a factory.",
+  "subject_visible": false,
+  "matches_scene": false
+ },
+ {
+  "scene": 3,
+  "prompt_ko": "비행기 내부 구조가 드러나며, 좌석과 계단, 조종실 등이 채워져 가는 애니메이션 같은 장면.",
+  "prompt": "interior view of an airplane fuselage, seats and stairs being installed one by one, animated style, warm interior lighting, wide angle showing the cabin filling up",
+  "what_is_shown": "The interior of an airplane cabin with rows of seats and overhead compartments.",
+  "subject_visible": true,
+  "matches_scene": false
+ },
+ {
+  "scene": 4,
+  "prompt_ko": "비행기 외부에 붉은색과 흰색의 도료가 스프레이와 브러시로 꼼꼼히 발라지는 장면.",
+  "prompt": "exterior of an airplane fuselage, red and white special paint being sprayed and brushed on meticulously, glossy finish, soft diffused lighting, side profile view",
+  "what_is_shown": "A close-up view of a red and white airplane fuselage with passenger windows against a clear sky.",
+  "subject_visible": true,
+  "matches_scene": false
+ },
+ {
+  "scene": 5,
+  "prompt_ko": "거대한 엔진 블록이 비행기 주날개에 고정되고 랜딩 기어가 설치되는 장면.",
+  "prompt": "large jet engine block being bolted onto the main wing, landing gear being installed, mechanical details visible, industrial workshop lighting, dynamic angle",
+  "what_is_shown": "A large jet engine block is mounted on an airplane wing inside a hangar.",
+  "subject_visible": true,
+  "matches_scene": true
+ },
+ {
+  "scene": 7,
+  "prompt_ko": "하늘을 나는 비행기를 바라보는 인간의 손과 눈이 클로즈업된 감동적인 장면.",
+  "prompt": "human hand and eye looking up at a flying airplane in the sky, emotional close-up, soft focus background, warm natural lighting, centered composition",
+  "what_is_shown": "A close-up of a man's face looking upward with an emotional expression against a sky background.",
+  "subject_visible": false,
+  "matches_scene": false
+ }
+]

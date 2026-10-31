@@ -200,7 +200,7 @@ def recent(limit: int = 20) -> list[dict]:
 # AI 장면 카드의 미리보기(workdir/gen_cache)는 작업 폴더 밖에 있어서 zip의 gen_cache/에 함께 담는다.
 EXPORT_VERSION = 1
 STORED = {".mp4", ".mp3", ".m4a", ".png", ".jpg", ".jpeg", ".webp", ".zip", ".mov", ".mkv", ".webm"}  # 이미 압축된 파일
-_GEN_IMAGE = re.compile(r"^(img_[0-9a-zA-Z]+)_[\d.]+s_m\d\.mp4$")
+_GEN_IMAGE = re.compile(r"^(img_[0-9a-zA-Z]+)_[\d.]+s_m\d(_fit(_\d+x\d+)?)?\.mp4$")
 
 
 def _swap_paths(value, swap):

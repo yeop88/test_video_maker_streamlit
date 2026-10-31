@@ -8,6 +8,9 @@ from pathlib import Path
 # pyarrow는 맨 먼저 불러온다. Whisper·Chatterbox(torch/CUDA) 등을 올린 뒤 처음으로 pyarrow DLL을 불러오면
 # Windows에서 서버 프로세스가 access violation으로 죽는 일이 있었다 (결과 표 st.dataframe에서 처음 불러올 때).
 import pyarrow  # noqa: F401
+# OpenCV(cv2)도 같은 이유로 먼저 불러온다. 큐 스레드가 쇼츠 썸네일 점수를 매기며 처음 불러오다
+# access violation으로 서버가 죽은 적이 있다 (2026-10-31, torch를 올린 뒤).
+import cv2  # noqa: F401
 import streamlit as st
 
 import shorts_maker
@@ -25,6 +28,7 @@ LAYOUT_LABELS = {
 VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 SUBTITLE_LABELS = {"plain": "기본", "karaoke": "단어 강조 (읽는 낱말 색칠)"}
 TITLE_LABELS = {"bold": "크고 굵게 (핵심 낱말 강조)", "box": "반투명 상자", "band": "위쪽 띠"}
+OUTPUT_LABELS = {"1080x1920": "1080×1920 (9:16, 쇼츠·릴스 표준)", "480x640": "480×640 (3:4, 작게)"}
 VIDEO_TYPES = ["mp4", "mov", "webm", "mkv", "m4v", "avi"]
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -621,6 +625,9 @@ def screen_settings() -> None:
     show_message()
     col_set, col_view = st.columns([3, 2])
     with col_set:
+        st.radio("출력 크기", presets.CHOICES["output_size"], format_func=OUTPUT_LABELS.get, key="output_size",
+                 horizontal=True, help="둘 다 세로 화면입니다. 자막·제목은 같은 비율로 줄어듭니다. "
+                                       "480×640은 파일이 작고 만들기가 빠르지만 쇼츠·릴스 화면(9:16)보다 위아래가 짧습니다.")
         st.radio("세로 변환 방식", presets.CHOICES["layout"], format_func=LAYOUT_LABELS.get, key="layout")
         st.checkbox("위쪽에 제목 표시", key="show_title")
         st.radio("제목 모양", presets.CHOICES["title_style"], format_func=TITLE_LABELS.get, key="title_style",
@@ -660,8 +667,8 @@ def screen_settings() -> None:
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
-def preview_background(video: str, t: float, layout: str) -> bytes:
-    return media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, config.OUTPUT_SIZE)
+def preview_background(video: str, t: float, layout: str, size: tuple[int, int]) -> bytes:
+    return media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, size)
 
 
 def style_preview() -> bytes:
@@ -673,11 +680,12 @@ def style_preview() -> bytes:
         title = short["title"] or title
         clip = next((c for c in short["clips"] if c.get("kind") != "ai" and c["end"] > c["start"]), None)
         if clip and p.job is not None:
-            background = preview_background(str(p.job.video), (clip["start"] + clip["end"]) / 2, ss.layout)
+            background = preview_background(str(p.job.video), (clip["start"] + clip["end"]) / 2, ss.layout,
+                                            config.output_size(ss.output_size))
         text = next((c["narration"] for c in short["clips"] if c.get("narration")), text)
     return preview.render(background, title, text, ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style,
                           ss.highlight_color, ss.title_style, ss.show_title, ss.get("show_safe_guide", True),
-                          font=ss.subtitle_font)
+                          font=ss.subtitle_font, size=config.output_size(ss.output_size))
 
 
 def voice_summary() -> str:
@@ -699,7 +707,8 @@ SETTING_GROUPS = [
     ("🎙️ 나레이션 목소리", "나레이션 목소리 설정", voice_settings, voice_summary),
     ("🔊 소리·배경음악", "소리·배경음악 설정", sound_settings, sound_summary),
     ("🎬 화면·자막", "화면·자막 설정", screen_settings,
-     lambda: f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · "
+     lambda: ("" if ss.output_size == presets.DEFAULTS["output_size"] else f"{ss.output_size.replace('x', '×')} · ")
+             + f"{LAYOUT_LABELS[ss.layout].split(' (')[0]} · "
              + (f"제목 {TITLE_LABELS[ss.title_style].split(' (')[0]} · " if ss.show_title else "제목 없음 · ")
              + f"{SUBTITLE_LABELS[ss.subtitle_style].split(' (')[0]} 자막 · {ss.font_size}"
              + (f" · {next((f['name'] for f in fonts.list_fonts() if f['id'] == ss.subtitle_font), '')}" if ss.subtitle_font else "")),
@@ -770,7 +779,7 @@ original_gain, duck_gain = ss.original_gain, ss.duck_gain
 st.title("🎬 AI 쇼츠 나레이션 스튜디오")
 st.caption(
     "영상을 올리면 AI가 **장면과 대사를 이해**해서 하이라이트 구간을 고르고, "
-    "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(1080×1920)를 만들어 줍니다. "
+    "**한국어 나레이션**과 **한글 자막**을 입힌 세로 쇼츠/릴스(기본 1080×1920)를 만들어 줍니다. "
     "영상이 없으면 **주제만으로 AI가 대본과 장면을 만들어** 쇼츠를 만듭니다."
 )
 
@@ -1323,7 +1332,7 @@ def enqueue_cards(p: project.Project, short: dict, uids: set[str], new_seed: boo
             clip.pop("preview", None)
         if scene_made(clip):
             continue
-        params = {k: clip.get(k, "") for k in ("prompt_ko", "prompt", "prompt_src")}
+        params = {k: clip.get(k, "") for k in ("prompt_ko", "prompt", "prompt_src", "subject")}
         params.update(engine=clip.get("engine", "image"), seed=int(clip.get("seed", 0)),
                       seconds=float(clip.get("seconds", 5.0)), short_id=short["id"])
         if any(jobqueue.same_task(q, "scene", scene_key(clip)) for q in jobqueue.items()):
@@ -1412,15 +1421,16 @@ def card_preview(job: pipeline.Job, short: dict, clip: dict) -> bytes:
     narration = ss.get(card_key(uid, "narration"), clip["narration"]) or " "
     return scene_preview(str(job.video), round(min(start + 0.3, job.duration), 1), ss.layout, short["title"], narration,
                          ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style, ss.highlight_color,
-                         ss.title_style, ss.show_title, font=ss.subtitle_font)
+                         ss.title_style, ss.show_title, font=ss.subtitle_font, size=config.output_size(ss.output_size))
 
 
 @st.cache_data(show_spinner=False, max_entries=200)
-def scene_preview(video: str, t: float, layout: str, title: str, text: str, *style, font: str) -> bytes:
+def scene_preview(video: str, t: float, layout: str, title: str, text: str, *style, font: str,
+                  size: tuple[int, int]) -> bytes:
     """세로 장면 미리보기 PNG (작은 그림이라 많이 캐시해도 됨. 큰 배경 프레임은 캐시하지 않음).
     style = (font_size, margin_percent, color, subtitle_style, highlight_color, title_style, show_title)."""
-    background = media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, config.OUTPUT_SIZE)
-    return preview.render(background, title, text, *style, False, width=240, font=font)
+    background = media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, size)
+    return preview.render(background, title, text, *style, False, width=240, font=font, size=size)
 
 
 def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None, vertical: bool = False) -> list[dict]:

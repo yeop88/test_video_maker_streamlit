@@ -6,7 +6,22 @@ ROOT = Path(__file__).resolve().parent.parent
 # 업로드 영상과 중간 결과물 저장 위치 (테스트는 SHORTS_WORK_DIR로 임시 폴더를 지정)
 WORK_DIR = Path(os.environ.get("SHORTS_WORK_DIR") or ROOT / "workdir")
 
-OUTPUT_SIZE = (1080, 1920)  # 쇼츠/릴스 세로 해상도
+OUTPUT_SIZE = (1080, 1920)  # 쇼츠/릴스 세로 해상도 (기본)
+# 출력 크기 설정(output_size)의 선택지. 둘 다 세로 화면이다.
+OUTPUT_SIZES = {"1080x1920": (1080, 1920), "480x640": (480, 640)}
+# 자막·제목 글자 크기는 너비 1080 기준 값이다. 작은 출력에서는 ASS의 PlayRes를 너비 1080(같은 비율)로 두고
+# libass가 줄여 그리게 해서, 같은 설정이 어느 크기에서나 같은 비율로 보이게 한다.
+ASS_WIDTH = 1080
+
+
+def output_size(name: str | None) -> tuple[int, int]:
+    return OUTPUT_SIZES.get(name or "", OUTPUT_SIZE)
+
+
+def ass_size(size: tuple[int, int]) -> tuple[int, int]:
+    """출력 크기 → 자막 좌표계 크기 (너비 ASS_WIDTH, 같은 가로세로 비율)."""
+    w, h = size
+    return ASS_WIDTH, int(round(ASS_WIDTH * h / w))
 MAX_SOURCE_SECONDS = 900  # 분석할 원본 구간 최대 길이 (15분)
 
 WHISPER_MODEL = "openai/whisper-large-v3-turbo"

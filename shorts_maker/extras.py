@@ -56,13 +56,14 @@ def make_thumbnail(frames: list[Image.Image], title: str, font_path: Path, out: 
     title = subtitles.clean_text(title)
     if title:
         draw = ImageDraw.Draw(img)
-        font_size = 140 if len(title) <= 8 else 116
+        scale = w / 1080  # 글자 크기는 너비 1080 기준 (작은 출력 크기에서는 같은 비율로 줄임)
+        font_size = int((140 if len(title) <= 8 else 116) * scale)
         font = ImageFont.truetype(str(font_path), font_size)
-        lines = subtitles.wrap(title, max(4, int((w - 120) / font_size)))[:3]
+        lines = subtitles.wrap(title, max(4, int((w - 120 * scale) / font_size)))[:3]
         y = int(h * 0.80) - (len(lines) - 1) * int(font_size * 1.2)
         for line in lines:
             tw = draw.textlength(line, font=font)
             draw.text(((w - tw) / 2, y), line, font=font, fill=(255, 230, 0),
-                      stroke_width=max(4, font_size // 14), stroke_fill=(0, 0, 0))
+                      stroke_width=max(2, font_size // 14), stroke_fill=(0, 0, 0))
             y += int(font_size * 1.2)
     img.filter(ImageFilter.SHARPEN).save(out, "JPEG", quality=90)

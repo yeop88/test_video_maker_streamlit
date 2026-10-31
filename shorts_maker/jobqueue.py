@@ -6,10 +6,16 @@
 - 작업마다 넣은 사람(owner, 브라우저마다 다른 ID)을 적어 두고, 대기 중인 자기 작업만 빼거나 순서를 바꾼다.
 - 실제 처리는 kind별 처리 함수(HANDLERS, tasks.py에서 등록)가 한다. 처리 함수는 report()로 진행 상황을 알리고,
   취소되면 report()가 Cancelled를 일으켜 멈춘다.
+- 처리 스레드는 프로세스에 하나, 큐를 처리하는 프로세스도 작업 폴더마다 하나다:
+  - Streamlit이 앱 폴더의 파일이 바뀌면 모듈을 다시 불러오는데(새 모듈 객체), 그때 처리 스레드가 하나 더 생겨
+    두 작업이 동시에 돈 적이 있다. 스레드·잠금·진행 상황·취소 신호·일시정지는 모듈이 아니라 _STATE(sys에 둠)에 둔다.
+  - 같은 작업 폴더를 쓰는 앱 서버가 둘이면 잠금 파일(gen_queue.lock)을 잡은 프로세스만 큐를 처리한다.
 """
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 import traceback
@@ -34,15 +40,26 @@ KIND_LABELS = {
 DEFAULT_SEC = {"analyze": 240, "plan": 60, "narrate": 40, "make": 60, "scene": 30, "music": 60, "voice": 15,
                "upload": 20}
 KEEP_FINISHED = 60  # 끝난 항목은 최근 이만큼만 남긴다 (예상 시간 계산에도 씀)
+# AI 생성 프로세스를 쓰지 않는 작업 (시작 전에 쉬고 있는 생성 프로세스를 내려 GPU 메모리를 비운다).
+# make는 아직 만들지 않은 AI 장면을 만들 수 있어서 빼고, scene·music은 생성 프로세스를 쓴다.
+LLM_KINDS = {"analyze", "plan", "narrate", "upload", "voice"}
 
 Report = Callable[..., None]
-HANDLERS: dict[str, Callable[[dict, Report], dict | None]] = {}
+RUNNER_NAME = "job-queue"
 
-_lock = threading.RLock()
-_runner: threading.Thread | None = None
-_paused = False
-_cancel = threading.Event()
-_progress: dict[str, dict] = {}  # 항목 ID → {"note", "step", "total", "lines"} (진행 중인 항목, 저장하지 않음)
+# 모듈을 다시 불러와도 프로세스에 하나만 있어야 하는 것들 (sys는 다시 불러오지 않음)
+_STATE: dict = sys.__dict__.setdefault("_shorts_job_queue", {})
+_STATE.setdefault("lock", threading.RLock())
+_STATE.setdefault("cancel", threading.Event())
+_STATE.setdefault("progress", {})  # 항목 ID → {"note", "step", "total", "lines"} (진행 중인 항목, 저장하지 않음)
+_STATE.setdefault("handlers", {})  # tasks.py가 등록 (다시 불러오면 새 함수로 덮어씀 → 처리 스레드도 새 코드를 씀)
+_STATE.setdefault("paused", False)
+_STATE.setdefault("runner", None)
+
+HANDLERS: dict[str, Callable[[dict, Report], dict | None]] = _STATE["handlers"]
+_lock: threading.RLock = _STATE["lock"]
+_cancel: threading.Event = _STATE["cancel"]
+_progress: dict[str, dict] = _STATE["progress"]
 
 
 class Cancelled(Exception):
@@ -76,9 +93,18 @@ def _load() -> list[dict]:
 def _save(items: list[dict]) -> None:
     path = queue_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(".gen_queue.json.tmp")
+    # 임시 파일 이름은 프로세스·스레드마다 다르게 (같은 이름이면 앱 서버 둘이 동시에 쓸 때 서로의 파일을 바꿔치기함)
+    tmp = path.with_name(f".gen_queue.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    for attempt in range(20):  # Windows는 다른 프로세스가 읽는 중인 파일을 바꾸지 못함 → 잠깐 뒤 다시
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
 
 
 def items() -> list[dict]:
@@ -170,14 +196,13 @@ def clear(statuses: tuple[str, ...], owner: str | None = None) -> None:
 
 
 def set_paused(paused: bool) -> None:
-    global _paused
-    _paused = paused
+    _STATE["paused"] = paused
     if not paused:
         ensure_runner()
 
 
 def is_paused() -> bool:
-    return _paused
+    return _STATE["paused"]
 
 
 def progress(item_id: str) -> dict:
@@ -254,10 +279,22 @@ def _finish(item_id: str, status: str, error: str = "", result: dict | None = No
     _progress.pop(item_id, None)
 
 
+def _canceled_in_file(item_id: str) -> bool:
+    """다른 앱 서버 프로세스에서 취소했는지 (그 프로세스의 취소 신호는 여기까지 오지 않으므로 큐 파일로 확인)."""
+    q = get(item_id)
+    return q is None or q["status"] == CANCELED
+
+
 def _reporter(item_id: str) -> Report:
+    checked = [0.0]
+
     def report(note: str | None = None, step: int | None = None, total: int | None = None, line: str | None = None):
         if _cancel.is_set():
             raise Cancelled()
+        if time.time() - checked[0] > 1.0:
+            checked[0] = time.time()
+            if _canceled_in_file(item_id):
+                raise Cancelled()
         prog = _progress.setdefault(item_id, {"lines": []})
         if line:
             prog["lines"].append(line)
@@ -271,15 +308,51 @@ def _reporter(item_id: str) -> Report:
     return report
 
 
+def _process_lock():
+    """이 작업 폴더의 큐를 처리할 권리 (다른 프로세스가 잡고 있으면 None). 프로세스가 끝나면 OS가 풀어 준다."""
+    path = config.WORK_DIR / "gen_queue.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except OSError:
+        handle.close()
+        return None
+
+
 def _loop() -> None:
+    held = None
+    while held is None:  # 다른 앱 서버가 큐를 처리 중이면 그 서버가 끝날 때까지 기다린다
+        held = _process_lock()
+        if held is None:
+            time.sleep(2)
+    _STATE["lock_file"] = held
+    with _lock:  # 큐를 처리하던 프로세스가 끝났다면 그때 하던 작업은 다시 대기로
+        queue = _load()
+        if any(q["status"] == RUNNING for q in queue):
+            for q in queue:
+                if q["status"] == RUNNING:
+                    q["status"] = WAITING
+            _save(queue)
     while True:
-        item = None if _paused else _next()
+        item = None if _STATE["paused"] else _next()
         if item is None:
             generate.stop_idle()
             time.sleep(0.5)
             continue
         _cancel.clear()
         _progress[item["id"]] = {"lines": [], "note": "시작하는 중"}
+        if item["kind"] in LLM_KINDS:  # LLM(Ollama)·음성 모델이 GPU를 쓰기 전에 쉬고 있는 생성 프로세스를 내린다
+            generate.stop_idle(now=True)
         handler = HANDLERS.get(item["kind"])
         try:
             if handler is None:
@@ -294,15 +367,14 @@ def _loop() -> None:
 
 
 def ensure_runner() -> None:
-    """큐를 처리하는 백그라운드 스레드를 (한 번만) 띄운다. 앱 재시작 전 하던 작업은 다시 대기로 돌린다."""
-    global _runner
+    """큐를 처리하는 백그라운드 스레드를 프로세스에 하나만 띄운다 (모듈을 다시 불러와도 새로 띄우지 않음).
+    앱 재시작 전 하던 작업은 스레드가 큐 처리 권리를 잡은 뒤 다시 대기로 돌린다."""
     with _lock:
-        if _runner is not None and _runner.is_alive():
+        runner = _STATE.get("runner")
+        if runner is not None and runner.is_alive():
             return
-        queue = _load()
-        for q in queue:
-            if q["status"] == RUNNING:
-                q["status"] = WAITING
-        _save(queue)
-        _runner = threading.Thread(target=_loop, name="job-queue", daemon=True)
-        _runner.start()
+        if any(t.name == RUNNER_NAME and t.is_alive() for t in threading.enumerate()):
+            return  # 이 보호가 생기기 전 코드가 띄운 스레드
+        runner = threading.Thread(target=_loop, name=RUNNER_NAME, daemon=True)
+        _STATE["runner"] = runner
+        runner.start()

@@ -1,5 +1,9 @@
 [server]
 maxUploadSize = 1024  # MB
+# 앱 패키지는 「파일이 바뀌면 모듈 다시 불러오기」에서 뺀다. 다시 불러오면 작업 큐 처리 스레드가 하나 더 생겨
+# 두 작업이 동시에 돈 적이 있다 (불러 둔 모델·생성 프로세스도 두 벌이 될 수 있음).
+# shorts_maker·gen을 고쳤으면 서버를 다시 켠다. app.py는 지금처럼 고치면 바로 반영된다.
+folderWatchBlacklist = ["*/shorts_maker/*", "*/gen/*"]
 
 [theme]
 base = "dark"

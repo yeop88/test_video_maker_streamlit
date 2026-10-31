@@ -10,6 +10,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 
 from . import config
@@ -256,11 +257,13 @@ def fits(need_gb: float, s: Specs, device: str) -> str:
 # 백그라운드 스레드 하나가 1초마다 재서 최근 HISTORY_SEC초를 모아 둔다 (접속한 모든 화면이 같은 기록을 봄).
 # Windows(WDDM)에서는 nvidia-smi가 프로그램별 GPU 메모리를 알려 주지 않아서, GPU는 전체 사용량만 보여 준다.
 HISTORY_SEC = 120
-_history: list[dict] = []
-_processes: list[dict] = []
-_sampler = None
-_proc_cache: dict[int, object] = {}  # pid → psutil.Process (CPU %는 같은 객체로 재야 함)
-_roles: dict[int, str] = {}  # pid → 화면에 보일 이름
+# 모듈을 다시 불러와도 재는 스레드와 기록은 프로세스에 하나만 (jobqueue._STATE와 같은 이유)
+_SHARED: dict = sys.__dict__.setdefault("_shorts_usage", {"history": [], "processes": [], "proc_cache": {}, "roles": {},
+                                                           "sampler": None})
+_history: list[dict] = _SHARED["history"]
+_processes: list[dict] = _SHARED["processes"]
+_proc_cache: dict[int, object] = _SHARED["proc_cache"]  # pid → psutil.Process (CPU %는 같은 객체로 재야 함)
+_roles: dict[int, str] = _SHARED["roles"]  # pid → 화면에 보일 이름
 
 
 def _gpu_now() -> list[dict]:
@@ -365,17 +368,19 @@ def _sample_loop() -> None:
 
 def ensure_sampler() -> None:
     """자원 사용량을 재는 백그라운드 스레드를 (한 번만) 띄운다. psutil이 없으면 띄우지 않는다."""
-    global _sampler
     import threading
 
-    if _sampler is not None and _sampler.is_alive():
+    sampler = _SHARED["sampler"]
+    if sampler is not None and sampler.is_alive():
+        return
+    if any(t.name == "usage-sampler" and t.is_alive() for t in threading.enumerate()):
         return
     try:
         import psutil  # noqa: F401
     except ImportError:
         return
-    _sampler = threading.Thread(target=_sample_loop, name="usage-sampler", daemon=True)
-    _sampler.start()
+    _SHARED["sampler"] = threading.Thread(target=_sample_loop, name="usage-sampler", daemon=True)
+    _SHARED["sampler"].start()
 
 
 def usage_history() -> list[dict]:

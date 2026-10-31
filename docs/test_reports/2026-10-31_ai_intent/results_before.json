@@ -1,0 +1,402 @@
+[
+ {
+  "name": "airplane",
+  "topic": "비행기가 만들어지는 과정의 핵심을 빠르게 설명하는 쇼츠",
+  "engine": "image",
+  "script_sec": 9.1,
+  "title": "비행기의 탄생 비결",
+  "scenes": [
+   {
+    "prompt_ko": "흰색 배경에 작은 스케치로 그려진 비행기 설계도나 공학 도면을 보여주는 장면.",
+    "prompt": "white background, simple sketch of an airplane engineering blueprint, technical lines, neutral lighting, flat lay composition, clean style",
+    "narration": "우리의 하늘을 지키는 비행기는 어떻게 태어날까요?",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "풍동 실험실에서 모형 비행기를 불어주는 풍동 속의 모습.",
+    "prompt": "wind tunnel experiment, model airplane inside airflow, dynamic motion blur, bright laboratory lighting, medium shot, scientific atmosphere",
+    "narration": "먼저 공기역학적 형상을 설계하여 바람을 이길 구조를 만듭니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "대형 공장에서 로봇 암이 금속 부품들을 정밀하게 조립하는 모습.",
+    "prompt": "large factory floor, robotic arms assembling metal airplane parts, sparks flying, industrial lighting, wide angle shot, busy environment",
+    "narration": "강철과 복합재료를 사용해 가볍고 튼튼한 몸체를 조립합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "비행기 내부에서 엔진을 탑재하고 배선 작업을 하는 기술자들의 모습.",
+    "prompt": "inside airplane fuselage, engineers installing jet engines and wiring, close up on hands working, warm artificial lighting, detailed perspective",
+    "narration": "엔진과 전자 장비를 설치하여 비행에 필요한 동력을 부여합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "도색 작업이 끝나고 광택 있는 페인트를 입은 완성된 비행기의 모습.",
+    "prompt": "fully painted airplane on tarmac, glossy finish, vibrant colors, golden hour sunlight, low angle shot, majestic composition",
+    "narration": "완성된 비행기는 수려한 색칠과 마감 작업을 거쳐 태어납니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "하늘을 향해 이륙하며 날아오르는 비행기의 거대한背影과 푸른 하늘.",
+    "prompt": "airplane taking off into blue sky, massive silhouette against clouds, dynamic upward motion, bright daylight, wide aerial shot",
+    "narration": "이처럼 정교한 공정을 거쳐 하늘을 나는 기적은 완성됩니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 147.5,
+  "verdicts": [
+   {
+    "what_is_shown": "A top-down technical line drawing of an airplane on a white background.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A small airplane model inside a large wind tunnel with visible airflow and laboratory surroundings.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A large industrial factory with multiple yellow robotic arms assembling metallic airplane fuselage sections, sparks flying from welding operations.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "Technicians working inside a metallic aircraft fuselage with exposed wiring and engine components.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A fully painted airplane with glossy red and yellow livery on a tarmac during sunset",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A silhouette of an airplane flying above clouds against a blue sky with contrails.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 1.0,
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true
+  },
+  "passed": true
+ },
+ {
+  "name": "kimchi_rice",
+  "topic": "초보자를 위한 김치볶음밥 만드는 법",
+  "engine": "image",
+  "script_sec": 12.9,
+  "title": "초보자도 쉬운 김치볶음밥",
+  "scenes": [
+   {
+    "prompt_ko": "흰 배경 위에 깨끗한 흰 밥과 붉은 김치가 나란히 놓인 정적인 샷.",
+    "prompt": "white rice and red kimchi on a clean white background, simple composition, soft studio lighting, high detail food photography, no text or logos, 40 words",
+    "narration": "집에서 간단하게 맛있는 김치볶음밥을 만들려면 이렇게 시작하세요.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 프라이팬 위에서 김치가 볶어지고 있는 중거리 샷.",
+    "prompt": "kimchi being stir-fried in an orange frying pan, close-up shot, sizzling effect, warm lighting, steam rising, no text or logos, 40 words",
+    "narration": "먼저 김치를 잘게 자르고 기름을 두른 팬에 볶아 향기를 내줍니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "흰 밥이 붉은 김치와 섞여 볶아지는 과정의 클로즈업.",
+    "prompt": "white rice mixed with red kimchi being stir-fried together, close-up of grains coating, dynamic motion, bright kitchen lighting, no text or logos, 40 words",
+    "narration": "볶은 김치에 흰 밥을 넣고 함께 볶아 밥알 사이사이를 고루 적셔줍니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "붉은 고춧가루가 김치볶음밥 위에 가루로 뿌려지는 모습.",
+    "prompt": "red chili powder sprinkled onto kimchi fried rice, top-down view, vibrant colors, soft focus background, no text or logos, 40 words",
+    "narration": "마지막으로 간을 맞추고 고춧가루를 살짝 뿌려 색감을 더합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "깨가 김치볶음밥 위에 흩뿌려진 완성된 음식의 샷.",
+    "prompt": "sesame seeds sprinkled on finished kimchi fried rice, completed dish shot, appetizing colors, shallow depth of field, no text or logos, 40 words",
+    "narration": "깨를 뿌리면 아삭한 식감이 더해져 완벽한 한 끼가 됩니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "완성된 김치볶음밥이 담긴 그릇과 젓가락이 놓인 따뜻한 조명 샷.",
+    "prompt": "finished kimchi fried rice in a bowl with chopsticks, warm cozy lighting, inviting atmosphere, no text or logos, 40 words",
+    "narration": "오늘 저녁 메뉴로 추천하는 초보자용 김치볶음밥 완성입니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 45.0,
+  "verdicts": [
+   {
+    "what_is_shown": "A white bowl containing a mound of white rice and a portion of red kimchi on a plain white background.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up shot of kimchi being stir-fried in an orange frying pan with steam rising from it.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A wooden spoon lifts a portion of white rice mixed with red kimchi and other ingredients from a frying pan.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A bowl of kimchi fried rice with a mound of red chili powder sprinkled on top.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up shot of a bowl of kimchi fried rice topped with sesame seeds and green onions.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A bowl of kimchi fried rice with chopsticks being lifted from it, set on a wooden table with plants in the background.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 1.0,
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true
+  },
+  "passed": true
+ },
+ {
+  "name": "autumn_lake",
+  "topic": "가을 단풍이 물든 산속 호수의 고요한 아침",
+  "engine": "image",
+  "script_sec": 18.0,
+  "title": "가을 아침, 호수의 고요",
+  "scenes": [
+   {
+    "prompt_ko": "산속 깊은 곳에 위치한 호수 전체를 보여줍니다. 물결은 없으며, 주변 나무들은 가을 단풍으로 붉게 물들어 있습니다. 아침 햇살이 부드럽게 비치는 고요한 분위기입니다.",
+    "prompt": "A serene lake in a deep mountain forest, surrounded by trees with vibrant red autumn leaves, calm water surface without ripples, soft morning sunlight filtering through branches, wide angle shot, natural lighting, photorealistic style, no text or logos.",
+    "narration": "물결 하나 없이 잠든 호수 위로 붉은 단풍이 내려앉습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "호수 중앙에서 오리의 뒷모습과 옆모습이 보입니다. 물 위에 붉은 단풍나무의 그림자가 반사되어 있고, 오리는 고개를 들어 날아올 준비를 하고 있습니다.",
+    "prompt": "A single duck swimming on a calm lake reflecting red maple leaves, the duck lifting its head to look at the sky, ripples around the duck, autumn forest background with red foliage, soft morning light, medium shot, photorealistic style, no text or logos.",
+    "narration": "노을빛이 물에 비친 호수 위 작은 오리가 고개를 들었습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "호수 가장자리를 따라 걷는 사람의 뒷모습입니다. 나무가 빽빽하게 어우러진 산속 길에서, 발걸음이 물에 닿으며 작은 물결이 퍼져나갑니다.",
+    "prompt": "A person walking along the shore of a lake in an autumn forest, their footsteps creating small ripples on the water surface, dense trees with red leaves surrounding the path, low angle shot focusing on feet and water, soft morning light, photorealistic style, no text or logos.",
+    "narration": "연안으로 걸어가는 산책객 발자국이 고요함을 살짝 깨웁니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "호수 가장자리의 나뭇가지에 핀 노란 국화꽃입니다. 가을 아침의 차가운 공기가 느껴질 정도로 선명하며, 꽃잎이 살짝 흔들리는 모습입니다.",
+    "prompt": "Close-up of yellow chrysanthemum flowers blooming on a branch near a lake in autumn, petals gently swaying in the breeze, crisp morning air atmosphere, red maple leaves in background, shallow depth of field, soft natural lighting, photorealistic style, no text or logos.",
+    "narration": "가을 공기에 섞인 상쾌한 냄새와 함께 국화꽃이 바람에 흔들립니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "호수 위의 푸른 하늘과 그 위에 떠 있는 작은 흰구름입니다. 산의 능선이 배경으로 보이며, 전체적으로 매우 평온하고 차분한 느낌입니다.",
+    "prompt": "A clear blue sky above the lake with a single small white cloud floating gently, distant mountain ridge in the background, peaceful and calm atmosphere, wide shot of sky and horizon, soft morning light, photorealistic style, no text or logos.",
+    "narration": "푸른 하늘의 구름 한 점도 호수의 고요함을 지키며 서 있습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "산속 호수의 전체적인 풍경입니다. 붉은 단풍나무들이 호수를 감싸고 있으며, 아침 햇살이 호수 표면과 주변 숲을 비추며 완벽한 고요함을 보여줍니다.",
+    "prompt": "Wide panoramic view of an autumn lake surrounded by red maple trees in a mountain forest, morning sunlight illuminating the water and forest, perfect stillness and tranquility, serene atmosphere, wide angle shot, soft natural lighting, photorealistic style, no text or logos.",
+    "narration": "단풍이 물든 산속 호수는 시간의 흐름을 멈춘 듯 고요합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 44.8,
+  "verdicts": [
+   {
+    "what_is_shown": "A serene autumn mountain lake with vibrant red and orange foliage reflecting on calm water, ripples visible in the foreground.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "A mallard duck swimming in a lake with red autumn foliage reflected on the water surface.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "A person walking along the edge of a calm lake with autumn foliage and ripples in the water.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "Yellow chrysanthemums on a branch near a lake with red autumn leaves in the background",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A calm lake with a single white cloud against a blue sky and distant mountains in the background.",
+    "subject_visible": false,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "A serene autumn mountain lake surrounded by vibrant red and orange foliage with sunlight reflecting on the water.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 0.83,
+  "match_rate": 0.5,
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": false
+  },
+  "passed": false
+ },
+ {
+  "name": "cat_day",
+  "topic": "고양이가 하루 동안 하는 일",
+  "engine": "image",
+  "script_sec": 16.5,
+  "title": "고양이의 하루 루틴",
+  "scenes": [
+   {
+    "prompt_ko": "밝은 창가에서 눈을 뜨는 귀여운 고양이의 클로즈업. 부드러운 아침 빛이 들어오는 실내.",
+    "prompt": "cute tabby cat waking up eyes open sitting on windowsill morning sunlight soft focus close up interior no text",
+    "narration": "아침 햇살을 받아 눈을 뜨면, 고양이 하루는 수면에서 시작됩니다.",
+    "seconds": 6.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "고양이가 소파 위와 식탁 위로 뛰어다니며 주변 환경을 살피는 모습. 동적인 카메라 각도.",
+    "prompt": "cat jumping on sofa and dining table exploring room sniffing surroundings dynamic camera angle indoor home",
+    "narration": "잠 깨자마자 가장 먼저 하는 일은 집 구석구석을 탐색하며 냄새 맡는 것입니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "사료 그릇 앞에서 고개를 들어 주인을 보거나 먹이를 갉아먹는 고양이의 얼굴 클로즈업.",
+    "prompt": "cat eating dry food from bowl looking up at owner close up face detail indoor kitchen warm lighting",
+    "narration": "탐색 끝에 찾아낸 사료 앞에서는 잠시 멈춰 맛있게 먹습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "고양이가 책상 위나 옷걸이 등 높은 곳에 올라가 앉아 있는 모습. 날카로운 시선.",
+    "prompt": "cat sitting on top of bookshelf or curtain rod looking around alert sharp gaze high angle interior",
+    "narration": "식사는 잠시, 이제 본격적인 운동 시간입니다. 높은 곳으로 올라가 주변을 경계합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "고양이가 바닥에서 뛰어오르며 공중에서 몸을 비틀어 날카로운 포즈를 취하는 순간.",
+    "prompt": "cat leaping into air twisting body mid jump chasing invisible prey dramatic lighting action shot",
+    "narration": "사냥 본능을 발휘해 공중으로 점프합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "부드러운 이불 속에서 편안하게 잠든 고양이의 뒷모습. 따뜻한 저녁 조명.",
+    "prompt": "cat sleeping deeply in cozy bed soft blanket evening warm light peaceful atmosphere back view",
+    "narration": "하루의 마지막은 다시 침대로 돌아와 깊은 잠에 빠집니다.",
+    "seconds": 4.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 45.2,
+  "verdicts": [
+   {
+    "what_is_shown": "A close-up of a tabby cat sitting on a windowsill with soft morning light coming through the window.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A tabby cat walks across a beige sofa and onto a wooden dining table in a bright living room.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up of a tabby cat eating dry food from a white bowl with its head up and looking forward.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A tabby cat with white markings sits on a wooden bookshelf filled with books, looking directly at the camera.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A tabby cat mid-air performing an acrobatic twist after jumping from the ground in a sunlit outdoor setting.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A tabby cat sleeping peacefully on its back in a cozy bed with soft blankets and warm evening lighting.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 1.0,
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true
+  },
+  "passed": true
+ }
+]

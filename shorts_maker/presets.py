@@ -34,6 +34,7 @@ CHOICES = {
     "layout": ["blur", "crop", "smart"],
     "subtitle_style": ["plain", "karaoke"],
     "title_style": ["bold", "box", "band"],
+    "output_size": list(config.OUTPUT_SIZES),
 }
 
 DEFAULTS = {
@@ -52,6 +53,7 @@ DEFAULTS = {
     "bgm_gain": 0.25,
     "bgm_duck": 0.4,
     "layout": "blur",
+    "output_size": "1080x1920",  # 출력 크기 (config.OUTPUT_SIZES의 키, 둘 다 세로)
     "show_title": True,
     "font_size": 72,
     "margin_percent": 24,  # 쇼츠 앱이 아래쪽 약 20%를 가리므로 그 위로

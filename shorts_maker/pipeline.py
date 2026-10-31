@@ -202,7 +202,7 @@ def plan_ai(model: str, topic: str, target_sec: float, style: str, engine: str =
         cards.append({
             "uid": uuid.uuid4().hex[:8], "kind": "ai", "engine": kind, "seed": i + 1, "seconds": scene.seconds,
             "prompt_ko": scene.visual_ko.strip(), "prompt": scene.visual.strip(), "prompt_src": scene.visual_ko.strip(),
-            "narration": scene.narration,
+            "narration": scene.narration, "subject": script.subject,  # 장면 설명을 고쳐 다시 번역할 때도 주인공을 넣음
         })
     return script.title, cards
 
@@ -438,9 +438,9 @@ def fit_clips(job: Job | None, clips: list[dict], speech_sec: list[float]) -> li
     return spans
 
 
-def _crop_x_for(video: Path) -> str | None:
+def _crop_x_for(video: Path, size: tuple[int, int] | None = None) -> str | None:
     """피사체 따라 크롭의 crop x 식 (세로로 자를 여유가 있는 가로 영상일 때만)."""
-    w, h = config.OUTPUT_SIZE
+    w, h = size or config.OUTPUT_SIZE
     info = media.probe(video)
     scaled_w = int(round(info.width * h / info.height / 2)) * 2
     if scaled_w <= w + 8:
@@ -466,6 +466,7 @@ def make_short(
     highlight_color: str = "#FFE600",
     title_style: str = "box",
     font: str = "",
+    size: tuple[int, int] | None = None,
     music_path: Path | None = None,
     music_gain: float = 0.25,
     music_duck: float = 0.4,
@@ -556,13 +557,13 @@ def make_short(
     if ai_items:
         on_status(f"🎨 AI 장면 {len(ai_items)}개 만들기 (처음에는 모델을 불러오느라 오래 걸립니다)")
         scenes = [{"prompt": c["prompt"], "engine": c.get("engine", "image"), "seed": int(c.get("seed", 0)),
-                   "seconds": spans[i][1]} for i, c in ai_items]
+                   "seconds": spans[i][1], "size": list(size or config.OUTPUT_SIZE)} for i, c in ai_items]
         for (i, _), path in zip(ai_items, generate.scene_clips(scenes)):
             assets[i] = path
 
     # 5) 카드마다 세로 화면 장면을 만들어 잇는다
     on_status("🎬 장면 이어 붙이기")
-    w, h = config.OUTPUT_SIZE
+    w, h = size or config.OUTPUT_SIZE  # 출력 크기 (설정 output_size)
     seg_dir = work / "segments"
     if seg_dir.exists():
         shutil.rmtree(seg_dir)
@@ -573,7 +574,7 @@ def make_short(
         if is_ai(clip):
             media.fit_generated(assets[i], b - a, seg, (w, h))
         else:
-            media.source_segment(job.video, a, b, seg, layout, (w, h), crop_x_for=_crop_x_for)
+            media.source_segment(job.video, a, b, seg, layout, (w, h), crop_x_for=lambda v: _crop_x_for(v, (w, h)))
         segments.append(seg)
     body = work / "body.mp4"
     media.concat_segments(segments, body, hold_sec=hold)
@@ -601,9 +602,11 @@ def make_short(
     fonts.mkdir(exist_ok=True)
     if not (fonts / font_file.name).exists():
         shutil.copy(font_file, fonts / font_file.name)
-    cues = subtitles.build_cues(rows, subtitles.chars_per_line(font_size, w))
+    # 자막 좌표계는 너비 1080 기준 (작은 출력이면 libass가 같은 비율로 줄여 그림 → 글자 크기 설정이 어느 크기에서나 같게 보임)
+    ass_w, ass_h = config.ass_size((w, h))
+    cues = subtitles.build_cues(rows, subtitles.chars_per_line(font_size, ass_w))
     subtitles.write_ass(
-        cues, work / "subs.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
+        cues, work / "subs.ass", family, font_size, int(ass_h * margin_percent / 100), color, (ass_w, ass_h),
         title=title, title_end=total,
         highlight=highlight_color if subtitle_style == "karaoke" else None,
         title_style=title_style, title_color=highlight_color,

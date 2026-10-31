@@ -144,7 +144,7 @@ python -m venv .venv-ltx
 | 🧠 대본·구성 | LLM, 나레이션 말투(정보 전달 / 유쾌한 리뷰 / 감성 스토리), 쇼츠 길이, 쇼츠 개수 |
 | 🎙️ 나레이션 목소리 | Edge TTS 목소리·속도, Chatterbox 목소리 보관함·감정 강도·미리 듣기 |
 | 🔊 소리·배경음악 | 원본 소리 크기, **배경음악**(올린 음악이나 **AI로 만든 음악**을 보관함에서 골라 쓰기, 반복·페이드·나레이션 중 줄이기) |
-| 🎬 화면·자막 | 세로 변환 방식(블러 배경 / 가운데 크롭 / **피사체 따라 크롭**), 제목 표시·**제목 모양**(크고 굵게 / 반투명 상자 / 위쪽 띠), 자막 스타일(기본 / **단어 강조**), **글꼴**(이 컴퓨터의 한글 글꼴 또는 올린 글꼴), 자막 크기·위치·색. 오른쪽에 **미리보기**(앱 UI가 가리는 곳 표시) |
+| 🎬 화면·자막 | **출력 크기**(1080×1920 9:16 / 480×640 3:4, 자막은 같은 비율로 줄어듦), 세로 변환 방식(블러 배경 / 가운데 크롭 / **피사체 따라 크롭**), 제목 표시·**제목 모양**(크고 굵게 / 반투명 상자 / 위쪽 띠), 자막 스타일(기본 / **단어 강조**), **글꼴**(이 컴퓨터의 한글 글꼴 또는 올린 글꼴), 자막 크기·위치·색. 오른쪽에 **미리보기**(앱 UI가 가리는 곳 표시) |
 | 💻 컴퓨터·AI 모델 | 컴퓨터 사양, 계산 장치(작업별 GPU/CPU), 장치에 맞는 추천 모델, AI 이미지·동영상 모델, LTX-2.5 양자화. 추천 LLM이 없으면 「⬇️ 설치」 버튼 |
 
 배경음악은 권리가 있는 음악만 쓰세요.
@@ -207,6 +207,8 @@ tests/
   verify_pipeline.py    전체 파이프라인 검증 (3가지 조건, 수치 판정)
   test_presets_ui.py    프리셋 화면 테스트 (Streamlit AppTest)
   test_ui_browser.py    실제 브라우저(Edge) 화면 테스트: 드래그 업로드, 1~3단계 전체
+  test_queue_single_runner.py  공용 큐: 모듈을 다시 불러와도·서버가 둘이어도 한 번에 한 작업만
+  test_ai_intent.py     AI로 만든 쇼츠가 주제 의도와 맞는지 (비전 LLM 판정, 출력 크기)
   test_smart_crop.py    피사체 따라 크롭 테스트 (움직이는 피사체, 흔들림)
 docs/test_reports/      검증 기록
 workdir/                업로드 영상과 중간 결과물 (git 제외)
@@ -221,6 +223,8 @@ workdir/                업로드 영상과 중간 결과물 (git 제외)
 # 실제 브라우저 테스트 (개발용 패키지 필요: pip install -r requirements-dev.txt, Microsoft Edge 사용)
 .venv\Scripts\python tests\test_ui_browser.py --quick   # 드래그 업로드만 (몇십 초)
 .venv\Scripts\python tests\test_ui_browser.py           # 업로드부터 다운로드까지 (약 2분)
+.venv\Scripts\python tests\test_queue_single_runner.py   # 공용 큐가 한 번에 한 작업만 처리하는지 (GPU 불필요, 십여 초)
+.venv\Scripts\python tests\test_ai_intent.py 결과폴더 --size 480x640   # AI 쇼츠가 주제 의도와 맞는지 (GPU, 약 12분)
 ```
 
 정답을 아는 테스트 영상 3개를 직접 만들어 전체 과정을 돌립니다.

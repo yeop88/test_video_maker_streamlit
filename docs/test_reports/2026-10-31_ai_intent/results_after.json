@@ -1,0 +1,426 @@
+[
+ {
+  "name": "airplane",
+  "topic": "비행기가 만들어지는 과정의 핵심을 빠르게 설명하는 쇼츠",
+  "engine": "video",
+  "script_sec": 17.8,
+  "title": "비행기, 어떻게 만들어져?",
+  "scenes": [
+   {
+    "prompt_ko": "거대한 공장 지붕 아래에서 조립 라인에 들어가는 항공기 부품들이 보입니다.",
+    "prompt": "massive industrial factory hangar interior with large commercial airliner fuselage sections moving along the assembly line, bright overhead lighting, wide angle shot, high detail",
+    "narration": "하늘을 누비는 비행기는 어떤 과정을 거쳐 탄생할까요?",
+    "seconds": 5.0,
+    "engine": "video"
+   },
+   {
+    "prompt_ko": "작업자들이 흰색 도색된 대형 비행기 동체와 날개 부분을 연결하고 있습니다.",
+    "prompt": "skilled workers attaching large white painted commercial airliner fuselage and wing sections together, clean factory floor, medium shot focusing on the aircraft body, bright lighting",
+    "narration": "먼저 튼튼한 뼈대가 되어야 합니다. 동체와 날개 구조물을 정밀하게 조립합니다.",
+    "seconds": 5.0,
+    "engine": "video"
+   },
+   {
+    "prompt_ko": "크고 강력한 터보팬 제트 엔진이 비행기 날개에 장착되고 있습니다.",
+    "prompt": "massive turbofan jet engine mounted on the commercial airliner wing being secured by robotic arms, detailed mechanical parts, close up shot, industrial background",
+    "narration": "그 위에 엔진과 날개 끝의 플랩 등 다양한 장비를 설치해 나갑니다.",
+    "seconds": 5.0,
+    "engine": "video"
+   },
+   {
+    "prompt_ko": "비행기 동체 내부에 붉은색 좌석과 비상구 표시가 설치된 모습입니다.",
+    "prompt": "interior view of commercial airliner cabin with rows of red passenger seats installed, emergency exit signs visible, clean white walls, eye level shot",
+    "narration": "내부에는 승객이 편안하게 앉을 의자와 안전 장비가 들어갑니다.",
+    "seconds": 5.0,
+    "engine": "video"
+   },
+   {
+    "prompt_ko": "완성된 대형 항공기가 비행장 활주로에서 기수를 들어 올리고 있습니다.",
+    "prompt": "fully painted commercial airliner on airport runway with nose gear lifted, clear blue sky background, low angle shot showing the entire aircraft, dramatic lighting",
+    "narration": "마지막으로 외부 도색과 인증 마크를 붙여 하늘을 날 준비를 합니다.",
+    "seconds": 5.0,
+    "engine": "video"
+   },
+   {
+    "prompt_ko": "하늘을 나는 대형 항공기가 구름 사이를 빠르게 지나가는 모습입니다.",
+    "prompt": "commercial airliner flying high above clouds, smooth motion blur effect, bright sunlight reflecting on the fuselage, wide shot from below looking up",
+    "narration": "수많은 공과 열정이 모여 하늘의 왕을 만들었습니다.",
+    "seconds": 5.0,
+    "engine": "video"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 376.3,
+  "verdicts": [
+   {
+    "what_is_shown": "A large airplane fuselage and engines are visible inside a factory with assembly equipment below.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "Workers are attaching a white-painted airplane fuselage and wing section inside a hangar.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up front view of a large airplane with its nose and cockpit visible, parked on an airport tarmac.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "The interior of an airplane cabin with red leather seats and overhead compartments.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A large airplane with landing gear deployed is shown from below against a clear blue sky.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A large airplane flying above clouds, viewed from behind.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 0.83,
+  "render_sec": 15.2,
+  "output": "480x640 31.8s audio=True",
+  "output_path": "C:\\Users\\USER\\AppData\\Local\\Temp\\intent_runs\\shorts_20261031_235306.mp4",
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true,
+   "output_size": true,
+   "length_20_45s": true,
+   "no_narration_cut": true
+  },
+  "passed": true
+ },
+ {
+  "name": "kimchi_rice",
+  "topic": "초보자를 위한 김치볶음밥 만드는 법",
+  "engine": "image",
+  "script_sec": 19.9,
+  "title": "초보도 쉬운 김치볶음밥",
+  "scenes": [
+   {
+    "prompt_ko": "큰 팬 위에 붉은색 김치가 가득 들어간 밥이 담겨 있는 모습.",
+    "prompt": "A large stainless steel frying pan filled with cooked white rice and bright red spicy kimchi, close-up shot, warm kitchen lighting, shallow depth of field focusing on the food texture.",
+    "narration": "손질 없이 바로 먹을 수 있는 김치볶음밥을 만들어 보겠습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "팬 안에서 붉은 김치가 익어가는 모습과 함께 김치 조각들이 튀는 장면.",
+    "prompt": "A large frying pan filled with red spicy kimchi sizzling in oil, steam rising, dynamic motion blur on splashing ingredients, bright overhead lighting.",
+    "narration": "준비한 김치를 팬에 넣고 기름을 두른 뒤 중약불에서 볶아주세요.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "흰 쌀밥이 붉은 김치와 섞이며 골고루 익어가는 팬 위의 모습.",
+    "prompt": "White steamed rice being mixed with red spicy kimchi in a large frying pan, ingredients turning golden brown, overhead high-angle shot showing the mixing process, soft kitchen lighting.",
+    "narration": "김치가 물기를 빼고 투명해지면 흰 쌀밥을 넣고 함께 볶습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "황금빛 김치볶음밥 위에 붉은 고춧가루와 기름이 뿌려지는 장면.",
+    "prompt": "Golden fried rice with kimchi in a large frying pan, red chili powder and shiny sesame oil being sprinkled on top, close-up macro shot, warm ambient light highlighting the vibrant colors.",
+    "narration": "밥과 김치가 잘 섞여 황금빛을 띠면 고춧가루와 참기름을 넣습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "노란 달걀이 김치볶음밥 위에 부스러지며 섞이는 모습과 함께 새우가 들어간 완성품.",
+    "prompt": "A large frying pan containing fried rice with kimchi, yellow scrambled eggs breaking into the mix and pink shrimp added on top, bright kitchen lighting, appetizing food photography style.",
+    "narration": "달걀을 깨서 넣거나 새우를 추가하면 더 풍미를 더할 수 있습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "도마 위에 나뭇잎으로 덮힌 김치볶음밥 그릇과 옆에 놓인 젓가락의 정적인 모습.",
+    "prompt": "A finished bowl of fried rice with kimchi covered by a green leaf on a wooden cutting board, chopsticks resting beside it, soft natural light, still life composition focusing on the subject.",
+    "narration": "불을 끈 뒤 잠시 덮어두면 김치 향이 배어 완성됩니다. 맛있게 드세요.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 113.5,
+  "verdicts": [
+   {
+    "what_is_shown": "A stainless steel frying pan filled with white rice and topped with a small pile of red kimchi.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "Kimchi pieces are sizzling and splattering in a frying pan with steam rising.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up shot of white rice mixed with red kimchi and green herbs in a dark frying pan, being stirred with a wooden spoon.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up shot of kimchi fried rice with red chili powder and sesame seeds being sprinkled on top.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A pan of kimchi fried rice topped with a yellow egg and shrimp.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A bowl of kimchi fried rice topped with green leaves and chopsticks beside it on a wooden board.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 1.0,
+  "render_sec": 9.5,
+  "output": "480x640 31.6s audio=True",
+  "output_path": "C:\\Users\\USER\\AppData\\Local\\Temp\\intent_runs\\shorts_20261031_235538.mp4",
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true,
+   "output_size": true,
+   "length_20_45s": true,
+   "no_narration_cut": true
+  },
+  "passed": true
+ },
+ {
+  "name": "autumn_lake",
+  "topic": "가을 단풍이 물든 산속 호수의 고요한 아침",
+  "engine": "image",
+  "script_sec": 14.3,
+  "title": "가을 호수의 고요한 아침",
+  "scenes": [
+   {
+    "prompt_ko": "오르막 길과 단풍나무가 우거진 산기슭에서 바라본 고요한 호수 전체를 보여주는 풍경.",
+    "prompt": "wide shot of a calm mountain lake surrounded by red autumn maple trees, mist rising from water surface, golden morning light filtering through branches, hyperrealistic landscape photography style, no text or logos",
+    "narration": "산허리를 감싸는 붉은 단풍이 피어난 깊은 호수,",
+    "seconds": 8.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "단풍나무 가지가 드리워진 물결 없는 호수 수면과 그 반사가 선명하게 보이는 클로즈업.",
+    "prompt": "close up view of a glass-like calm lake surface reflecting red maple leaves, still water texture, morning sunlight shimmering gently on ripples, autumn forest background, 8k resolution, no text",
+    "narration": "거울처럼 평온한 수면은 주변의 붉은 색을 비추고 있습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "단풍으로 물든 산비탈 사이로 비추는 아침 해빛과 호수 위의 안개 자욱한 모습.",
+    "prompt": "sunlight breaking through red autumn foliage over a mountain ridge, warm golden rays hitting the lake surface, thick morning mist hovering above water, serene atmosphere, wide angle nature shot, no text",
+    "narration": "산비탈 사이로 따뜻한 햇살이 호수 위로 부드럽게 내려옵니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "단풍나무 잎사귀가 살짝 흔들리는 모습과 그 그림자가 물결을 일으키는 호수 위로 드리워지는 장면.",
+    "prompt": "close up of red maple leaves gently swaying in the breeze, shadows of leaves dancing on the calm lake water, detailed texture of autumn foliage, soft natural lighting, peaceful nature scene, no text",
+    "narration": "아직 아무도 없는 호수 위로는 바람 소리만이 고요함을 깨웁니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "단풍나무가 우거진 산속 호수 전체를 내려다본 웅장하고 평화로운 전경.",
+    "prompt": "panoramic view of the autumn mountain lake surrounded by dense red maple forests, majestic landscape composition, soft morning glow, serene and peaceful mood, realistic digital painting style, no text",
+    "narration": "이 고요한 아침은 시간의 흐름을 멈춘 듯한 완벽한 평화를 선사합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "단풍나무와 호수가 어우러진 아름다운 아침 햇살 아래 호수 전체.",
+    "prompt": "beautiful wide shot of the autumn lake with red maple trees in foreground and background, warm golden hour lighting, crystal clear water reflecting the sky, tranquil nature scene, no text or logos",
+    "narration": "가을의 선물로 단풍이 물든 산속 호수에서 잠시 쉬어 가 보세요.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 42.6,
+  "verdicts": [
+   {
+    "what_is_shown": "A serene autumn mountain lake surrounded by vibrant red and orange foliage with mist rising from the water and mountains in the background.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A close-up of a calm lake surface with ripples and reflections of autumn foliage, including floating leaves.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "A serene autumn mountain lake with colorful fall foliage on hillsides, morning sunbeams piercing through mist over the water.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "Vibrant red maple leaves hang over a calm lake with their reflections visible in the water.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A serene autumn mountain lake surrounded by vibrant red and orange foliage with distant misty mountains.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "A serene autumn lake surrounded by vibrant red and orange foliage with reflections on calm water.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 0.83,
+  "render_sec": 9.4,
+  "output": "480x640 33.4s audio=True",
+  "output_path": "C:\\Users\\USER\\AppData\\Local\\Temp\\intent_runs\\shorts_20261031_235652.mp4",
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": true,
+   "output_size": true,
+   "length_20_45s": true,
+   "no_narration_cut": true
+  },
+  "passed": true
+ },
+ {
+  "name": "cat_day",
+  "topic": "고양이가 하루 동안 하는 일",
+  "engine": "image",
+  "script_sec": 18.5,
+  "title": "고양이의 하루 루틴",
+  "scenes": [
+   {
+    "prompt_ko": "밝은 햇살이 들어오는 창가에서 잠에서 깨어 눈을 비비며 앉아 있는 주황색 줄무늬 고양이의 모습",
+    "prompt": "orange tabby cat sitting on a windowsill, waking up and rubbing eyes, morning sunlight streaming through window, realistic style, close-up shot of the cat face, warm lighting, no text",
+    "narration": "새벽, 고양이 한 마리가 눈을 뜨며 하루를 시작합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 줄무늬 고양이가 식탁 위에 올라가 음식 그릇을 냄새 맡고 있는 장면",
+    "prompt": "orange tabby cat jumping onto a wooden dining table, sniffing a food bowl, curious expression, detailed fur texture, natural daylight, eye level angle, no text",
+    "narration": "식탁 위를 뛰어다니며 오늘 먹을 음식을 탐색합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 줄무늬 고양이가 카페트 위를 기어다니며 공을 노려보는 모습",
+    "prompt": "orange tabby cat stalking a small toy mouse on carpet, crouching low, focused gaze, soft indoor lighting, dynamic composition showing movement, no text",
+    "narration": "집 안 구석구석을 누비며 작은 사냥감을 쫓습니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 줄무늬 고양이가 햇살이 비치는 발코니 의자에 누워 잠든 모습",
+    "prompt": "orange tabby cat sleeping soundly on a balcony chair, sunlight patterns on fur, peaceful atmosphere, shallow depth of field, serene expression, no text",
+    "narration": "햇살이 강한 발코니에서 낮잠을 자며 에너지를 충전합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 줄무늬 고양이가 문턱을 넘으며 정원을 바라보는 뒷모습",
+    "prompt": "orange tabby cat walking out through an open door into a garden, evening twilight, silhouette against soft blue sky, tail swaying gently, no text",
+    "narration": "저녁이 되어 집 문을 열고 밖으로 나가 작은 산책도 합니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   },
+   {
+    "prompt_ko": "주황색 줄무늬 고양이가 따뜻한 방 안의 담요 위를 비비고 있는 모습",
+    "prompt": "orange tabby cat curling up on a warm blanket inside a cozy room, evening lamp glow, content expression, soft focus background, no text",
+    "narration": "안으로 돌아와 따뜻한 담요로 덮여 하루를 마칩니다.",
+    "seconds": 5.0,
+    "engine": "image"
+   }
+  ],
+  "prompt_has_subject": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   true
+  ],
+  "generate_sec": 41.8,
+  "verdicts": [
+   {
+    "what_is_shown": "An orange tabby cat sitting on a windowsill with eyes closed and whiskers visible, bathed in warm sunlight.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "An orange tabby cat standing on a wooden dining table sniffing a bowl of food.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "An orange tabby cat crouching on a carpet, staring intently at a small mouse.",
+    "subject_visible": true,
+    "matches_scene": false
+   },
+   {
+    "what_is_shown": "An orange tabby cat sleeping peacefully on a sunlit balcony chair with blurred greenery and buildings in the background.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "An orange tabby cat stands on a doorway threshold looking out into a garden at dusk.",
+    "subject_visible": true,
+    "matches_scene": true
+   },
+   {
+    "what_is_shown": "An orange tabby cat curled up and sleeping on a textured blanket in a warmly lit room.",
+    "subject_visible": true,
+    "matches_scene": true
+   }
+  ],
+  "subject_rate": 1.0,
+  "match_rate": 0.67,
+  "render_sec": 8.3,
+  "output": "480x640 30.0s audio=True",
+  "output_path": "C:\\Users\\USER\\AppData\\Local\\Temp\\intent_runs\\shorts_20261031_235809.mp4",
+  "checks": {
+   "title_or_narration_on_topic": true,
+   "subject_visible>=0.8": true,
+   "scene_matches>=0.75": false,
+   "output_size": true,
+   "length_20_45s": true,
+   "no_narration_cut": true
+  },
+  "passed": false
+ }
+]

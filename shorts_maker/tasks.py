@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -16,8 +17,10 @@ VOICE_LABELS = {voice_id: label for label, voice_id in tts.EDGE_VOICES.items()}
 LAYOUT_SHORT = {"blur": "블러 배경", "crop": "가운데 크롭", "smart": "피사체 따라 크롭"}
 
 # ───────────── 모델 (큐 스레드에서만 쓰므로 한 번에 하나씩) ─────────────
-_models: dict[tuple, object] = {}
-_models_lock = threading.Lock()
+# 모듈을 다시 불러와도 불러 둔 모델은 프로세스에 한 벌만 (다시 올리면 GPU 메모리가 두 배로 듦)
+_SHARED: dict = sys.__dict__.setdefault("_shorts_models", {"models": {}, "lock": threading.Lock()})
+_models: dict[tuple, object] = _SHARED["models"]
+_models_lock = _SHARED["lock"]
 
 
 def _model(name: str, device: str, loader):
@@ -176,7 +179,8 @@ def _ensure_prompt(clip: dict, model: str | None) -> None:
     """장면 설명(한글 가능)을 생성 모델용 영어 프롬프트로 (설명이 바뀌었을 때만 다시 번역)."""
     text = clip.get("prompt_ko", "").strip()
     if text and clip.get("prompt_src") != text:
-        clip["prompt"] = llm.english_prompt(model, text) if model else text
+        clip["prompt"] = (llm.english_prompt(model, text, subject=clip.get("subject", "")) if model
+                          else llm.anchor_subject(text, clip.get("subject", "")))
         clip["prompt_src"] = text
 
 
@@ -192,6 +196,8 @@ def settings_summary(s: dict, cards: list[dict]) -> str:
     bgm = f"배경음악 {track['name']} {s['bgm_gain']:.2f}" if track else "배경음악 없음"
     text = (f"{s['style']} · {voice} · {LAYOUT_SHORT.get(s['layout'], s['layout'])} · {subs} · "
             f"원본 소리 {s['original_gain']:.2f}/{s['duck_gain']:.2f} · {bgm}")
+    if s.get("output_size", "1080x1920") != "1080x1920":
+        text = f"{s['output_size'].replace('x', '×')} · " + text
     kinds = sorted({c.get("engine", "image") for c in cards if c.get("kind") == "ai"})
     if kinds:
         text += f" · LLM {s['llm_model']} · AI 장면 {', '.join(generate.MODEL_INFO[k]['name'] for k in kinds)}"
@@ -231,6 +237,7 @@ def make(item: dict, report) -> dict:
             out_dir=folder / "results",
             subtitle_style=s["subtitle_style"], highlight_color=s["highlight_color"],
             title_style=s.get("title_style", "box"), font=s.get("subtitle_font", ""),
+            size=config.output_size(s.get("output_size")),
             music_path=music.track_path(s["bgm_track"]), music_gain=s["bgm_gain"], music_duck=s["bgm_duck"],
             work_dir=proj.job.dir if proj.job else folder / "render", on_status=lambda m: report(line=prefix + m),
         )
@@ -290,7 +297,8 @@ def scene(item: dict, report) -> dict:
         sc = p["scene"]
     else:
         s = _settings(item)
-        card = {"prompt_ko": p["prompt_ko"], "prompt": p.get("prompt", ""), "prompt_src": p.get("prompt_src", "")}
+        card = {"prompt_ko": p["prompt_ko"], "prompt": p.get("prompt", ""), "prompt_src": p.get("prompt_src", ""),
+                "subject": p.get("subject", "")}
         if card["prompt_src"] != card["prompt_ko"].strip():
             report(line="🔤 장면 설명을 영어 프롬프트로")
         _ensure_prompt(card, s["llm_model"])

@@ -689,6 +689,19 @@ def test_fonts(page, work: Path):
     page.wait_for_timeout(2000)
     picked = page.get_by_role("dialog").get_by_role("combobox", name="글꼴 (자막·제목·썸네일)").input_value()
     check("올린 글꼴 지우기 → 자동", picked.startswith("자동"), picked)
+
+    # 출력 크기: 480×640을 고르면 미리보기가 3:4, 다시 1080×1920으로
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_text("480×640 (3:4, 작게)").click()
+    page.wait_for_timeout(1500)
+    wait_idle(page, 120000)
+    w, h = dialog.locator("img").first.evaluate("i => [i.naturalWidth, i.naturalHeight]")
+    check("출력 크기 480×640 → 미리보기 3:4", abs(h / w - 4 / 3) < 0.02, (w, h))
+    dialog.get_by_text("1080×1920 (9:16, 쇼츠·릴스 표준)").click()
+    page.wait_for_timeout(1500)
+    wait_idle(page, 120000)
+    w, h = dialog.locator("img").first.evaluate("i => [i.naturalWidth, i.naturalHeight]")
+    check("출력 크기 1080×1920 → 미리보기 9:16", abs(h / w - 16 / 9) < 0.02, (w, h))
     close_settings(page)
 
 

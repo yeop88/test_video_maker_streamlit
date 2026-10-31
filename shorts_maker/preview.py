@@ -39,20 +39,23 @@ def _guide(image: Image.Image, font_file: Path) -> Image.Image:
     draw.rectangle([0, 0, w, top], fill=color)
     draw.rectangle([0, h - bottom, w, h], fill=color)
     draw.rectangle([w - right, top, w, h - bottom], fill=color)
-    font = ImageFont.truetype(str(font_file), 34)
-    draw.text((24, 24), "앱 UI (상태 표시줄·검색)", font=font, fill=(255, 255, 255, 230))
-    draw.text((24, h - bottom + 24), "앱 UI (제목·채널·설명)", font=font, fill=(255, 255, 255, 230))
-    draw.text((w - right + 8, top + 24), "버튼", font=font, fill=(255, 255, 255, 230))
+    k = w / 1080  # 글자·여백은 너비 1080 기준
+    font = ImageFont.truetype(str(font_file), max(12, int(34 * k)))
+    pad = int(24 * k)
+    draw.text((pad, pad), "앱 UI (상태 표시줄·검색)", font=font, fill=(255, 255, 255, 230))
+    draw.text((pad, h - bottom + pad), "앱 UI (제목·채널·설명)", font=font, fill=(255, 255, 255, 230))
+    draw.text((w - right + int(8 * k), top + pad), "버튼", font=font, fill=(255, 255, 255, 230))
     return Image.alpha_composite(image.convert("RGBA"), layer).convert("RGB")
 
 
 def render(background: bytes | None, title: str, text: str, font_size: int, margin_percent: int, color: str,
            subtitle_style: str, highlight_color: str, title_style: str, show_title: bool, guide: bool,
-           width: int = 360, font: str = "") -> bytes:
-    """미리보기 PNG. background는 세로 장면 RGB 바이트(1080x1920, media.layout_frame) 또는 None."""
-    w, h = config.OUTPUT_SIZE
+           width: int = 360, font: str = "", size: tuple[int, int] | None = None) -> bytes:
+    """미리보기 PNG. background는 size(출력 크기, 기본 1080x1920) 세로 장면 RGB 바이트(media.layout_frame) 또는 None."""
+    w, h = size or config.OUTPUT_SIZE
+    ass_w, ass_h = config.ass_size((w, h))  # 실제 쇼츠와 같은 자막 좌표계
     font_file, family = fonts.resolve(font)
-    key = hashlib.sha1(repr((background is not None and hashlib.sha1(background).hexdigest(), str(font_file), title, text, font_size,
+    key = hashlib.sha1(repr((background is not None and hashlib.sha1(background).hexdigest(), str(font_file), (w, h), title, text, font_size,
                              margin_percent, color, subtitle_style, highlight_color, title_style, show_title)).encode())
     work = config.WORK_DIR / "preview" / key.hexdigest()[:12]
     out = work / "frame.png"
@@ -62,7 +65,7 @@ def render(background: bytes | None, title: str, text: str, font_size: int, marg
             shutil.copy(font_file, work / "fonts" / font_file.name)
         bg = Image.frombytes("RGB", (w, h), background[: w * h * 3]) if background else _background((w, h))
         bg.save(work / "bg.png")
-        lines = subtitles.wrap(subtitles.clean_text(text), subtitles.chars_per_line(font_size, w))[:2]
+        lines = subtitles.wrap(subtitles.clean_text(text), subtitles.chars_per_line(font_size, ass_w))[:2]
         n = sum(len(ln.split()) for ln in lines)
         # 낱말마다 0.5초씩: 1.1초 장면을 뽑으면 단어 강조 자막은 세 번째 낱말이 강조된 모습이 된다
         words, k = [], 0
@@ -70,7 +73,7 @@ def render(background: bytes | None, title: str, text: str, font_size: int, marg
             words.append([(0.5 * (k + j) + 0.01, 0.5 * (k + j) + 0.5) for j in range(len(ln.split()))])
             k += len(ln.split())
         cues = [(0.0, 0.5 * n + 1, lines, words if subtitle_style == "karaoke" else None)]
-        subtitles.write_ass(cues, work / "p.ass", family, font_size, int(h * margin_percent / 100), color, (w, h),
+        subtitles.write_ass(cues, work / "p.ass", family, font_size, int(ass_h * margin_percent / 100), color, (ass_w, ass_h),
                             title=title if show_title else "", title_end=0.5 * n + 1,
                             highlight=highlight_color if subtitle_style == "karaoke" else None,
                             title_style=title_style, title_color=highlight_color)
