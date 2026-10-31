@@ -1053,6 +1053,43 @@ def project_busy(p: project.Project, kinds: tuple[str, ...]) -> bool:
     return any(q["kind"] in kinds for q in jobqueue.for_project(str(p.dir)))
 
 
+STEPPER_CSS = """<style>
+.sm-steps{display:flex;align-items:center;gap:6px;margin:4px 0 2px;flex-wrap:wrap}
+.sm-step{display:flex;align-items:center;gap:6px;padding:4px 12px 4px 6px;border-radius:999px;font-size:14px;
+  border:1px solid rgba(250,250,250,.15);color:rgba(250,250,250,.55)}
+.sm-step b{display:inline-flex;width:22px;height:22px;border-radius:50%;align-items:center;justify-content:center;
+  font-size:12px;background:rgba(250,250,250,.12)}
+.sm-step.done{color:rgba(250,250,250,.85)} .sm-step.done b{background:#2e7d4f;color:#fff}
+.sm-step.now{color:#fff;border-color:#FF4B6E;background:rgba(255,75,110,.12)} .sm-step.now b{background:#FF4B6E;color:#fff}
+.sm-step.running{color:#fff;border-color:#e0a030;background:rgba(224,160,48,.12)} .sm-step.running b{background:#e0a030;color:#111}
+.sm-line{flex:0 0 18px;height:2px;background:rgba(250,250,250,.2)}
+</style>"""
+
+
+def stepper(p: project.Project) -> None:
+    """지금 어느 단계인지: ① 분석·구성(AI 대본) → ② 편집 → ③ 만들기 → ④ 결과. 큐에서 도는 단계는 ⏳."""
+    queued = {q["kind"] for q in jobqueue.for_project(str(p.dir))}
+    steps = [
+        ["AI 대본·장면 구성" if p.kind == "ai" else "분석·구성",
+         "running" if queued & {"analyze", "plan"} else "done" if p.shorts else "todo"],
+        ["카드 편집", "done" if p.results else "todo"],
+        ["쇼츠 만들기", "running" if "make" in queued else "done" if p.results else "todo"],
+        ["결과 받기", "done" if p.results else "todo"],
+    ]
+    if p.shorts and steps[0][1] == "done" and steps[2][1] == "todo":
+        steps[1][1] = "now"  # 구성이 끝났고 만들기 전이면 편집 중
+    elif not any(s == "running" for _, s in steps):
+        for step in steps:
+            if step[1] == "todo":
+                step[1] = "now"
+                break
+    marks = {"done": "✓", "running": "⏳"}
+    parts = [f'<div class="sm-step {state}"><b>{marks.get(state, i + 1)}</b>{name}</div>'
+             for i, (name, state) in enumerate(steps)]
+    st.html(STEPPER_CSS + '<div class="sm-steps">' + '<div class="sm-line"></div>'.join(parts) + "</div>")
+
+
+stepper(proj)
 if jobqueue.for_project(str(proj.dir)):
     st.fragment(project_tasks_box, run_every=1)(proj)
 project_failures(proj)
@@ -1215,8 +1252,26 @@ def card_buttons(p: project.Project, short: dict, uid: str, i: int) -> None:
     b_del.button("🗑", key=f"del_{uid}", help="이 카드 빼기", on_click=card_action, args=(p, short, uid, "delete"))
 
 
-def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None) -> list[dict]:
-    """카드마다: 원본 구간(구간 재생, 시작·끝) 또는 AI 장면, 나레이션, 순서 바꾸기·삭제. 고친 값을 저장하고 카드 목록을 돌려준다."""
+def card_preview(job: pipeline.Job, short: dict, clip: dict) -> bytes:
+    """원본 구간 카드가 쇼츠에서 보일 모습 (시작 장면 + 제목 + 나레이션 첫 두 줄, 지금 화면·자막 설정)."""
+    uid = clip["uid"]
+    start = float(ss.get(card_key(uid, "start"), clip["start"]))
+    narration = ss.get(card_key(uid, "narration"), clip["narration"]) or " "
+    return scene_preview(str(job.video), round(min(start + 0.3, job.duration), 1), ss.layout, short["title"], narration,
+                         ss.font_size, ss.margin_percent, ss.color, ss.subtitle_style, ss.highlight_color,
+                         ss.title_style, ss.show_title)
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def scene_preview(video: str, t: float, layout: str, title: str, text: str, *style) -> bytes:
+    """세로 장면 미리보기 PNG (작은 그림이라 많이 캐시해도 됨. 큰 배경 프레임은 캐시하지 않음)."""
+    background = media.layout_frame(Path(video), t, "crop" if layout == "smart" else layout, config.OUTPUT_SIZE)
+    return preview.render(background, title, text, *style, False, width=240)
+
+
+def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None, vertical: bool = False) -> list[dict]:
+    """카드마다: 원본 구간(구간 재생 또는 세로 미리보기, 시작·끝) 또는 AI 장면, 나레이션, 순서 바꾸기·삭제.
+    고친 값을 저장하고 카드 목록을 돌려준다."""
     cps = config.NARRATION_CHARS_PER_SECOND
     for i, clip in enumerate(short["clips"]):
         uid = clip["uid"]
@@ -1226,7 +1281,10 @@ def clip_cards(p: project.Project, short: dict, job: pipeline.Job | None) -> lis
         with st.container(border=True, key=f"cardbox_{uid}"):
             col_media, col_time, col_text = st.columns([1.3, 1, 3])
             with col_media:
-                st.video(str(job.video), start_time=float(clip["start"]), end_time=float(clip["end"]))
+                if vertical:
+                    st.image(card_preview(job, short, clip), width="stretch")
+                else:
+                    st.video(str(job.video), start_time=float(clip["start"]), end_time=float(clip["end"]))
             with col_time:
                 st.markdown(f"**구간 {i + 1}**")
                 start = st.number_input("시작(초)", 0.0, job.duration, float(clip["start"]), 0.1, format="%.1f",
@@ -1293,6 +1351,73 @@ if proj.kind == "upload":
         st.text(pipeline.timeline(job) or "(내용 없음)")
 
 # ───────────────────────── 2단계: 구성 수정 / 3단계: 쇼츠 만들기 ─────────────────────────
+@st.cache_data(show_spinner=False, max_entries=16)
+def cut_times(job_dir: str, frames: int, _job: pipeline.Job) -> list[float]:
+    """원본의 컷 전환 시각 (타임라인 표시용, 작업 폴더·캡처 수로 캐시)."""
+    try:
+        return pipeline.scene_cuts(_job)
+    except Exception:  # 캡처가 지워진 옛 작업
+        return []
+
+
+TIMELINE_CSS = """<style>
+.sm-tl{margin:2px 0 10px;font-size:12px;color:rgba(250,250,250,.6)}
+.sm-tl .row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.sm-tl .lab{flex:0 0 74px;text-align:right}
+.sm-tl .track{position:relative;flex:1;height:24px;border-radius:5px;background:rgba(250,250,250,.07);overflow:hidden}
+.sm-tl .seq{display:flex;gap:2px;background:none}
+.sm-tl .blk{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;min-width:14px;
+  border-radius:4px;overflow:hidden;white-space:nowrap}
+.sm-tl .src{background:#FF4B6E} .sm-tl .ai{background:#8a63d2}
+.sm-tl .pos{position:absolute;top:2px;bottom:7px;border-radius:3px;box-shadow:inset -2px 0 0 #0e1117;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;overflow:hidden}
+.sm-tl .voice{position:absolute;bottom:0;height:4px;background:#3fa7d6;opacity:.7}
+.sm-tl .range{position:absolute;top:0;bottom:0;background:rgba(250,250,250,.08);border-left:1px dashed rgba(250,250,250,.4);
+  border-right:1px dashed rgba(250,250,250,.4)}
+.sm-tl .cut{position:absolute;top:0;bottom:0;width:2px;background:#f2c94c}
+.sm-tl .legend{margin-left:82px} .sm-tl .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 10px;vertical-align:-1px}
+</style>"""
+
+
+def timeline(short: dict, job: pipeline.Job | None) -> None:
+    """카드 순서(쇼츠에 나오는 차례, 길이 비율)와 원본에서 고른 곳(대사·컷 전환과 함께)을 막대로 보여 준다."""
+    cards = [c for c in short["clips"] if c.get("kind") == "ai" or c["end"] > c["start"]]
+    if not cards:
+        return
+    length = lambda c: float(c.get("seconds", 5.0)) if c.get("kind") == "ai" else c["end"] - c["start"]
+    total = sum(length(c) for c in cards)
+    def block(i: int, c: dict) -> str:
+        ai = c.get("kind") == "ai"
+        what = "AI 장면" if ai else f"원본 {c['start']:.1f}~{c['end']:.1f}초"
+        return (f'<div class="blk {"ai" if ai else "src"}" style="flex:{length(c):.2f}" '
+                f'title="{i + 1}. {what} · {length(c):.1f}초">{i + 1}</div>')
+
+    seq = "".join(block(i, c) for i, c in enumerate(short["clips"]) if c in cards)
+    rows = [f'<div class="row"><span class="lab">쇼츠 순서<br>{total:.0f}초</span><div class="track seq">{seq}</div></div>']
+    legend = '<i style="background:#FF4B6E"></i>원본 구간'
+    if any(c.get("kind") == "ai" for c in cards):
+        legend += '<i style="background:#8a63d2"></i>AI 장면'
+    if job is not None and any(c.get("kind") != "ai" for c in cards):
+        d = max(job.duration, 0.1)
+        pct = lambda t: f"{max(0.0, min(100.0, t / d * 100)):.2f}%"
+        marks = []
+        if short.get("range"):
+            a, b = short["range"]
+            marks.append(f'<div class="range" style="left:{pct(a)};width:{pct(b - a)}" title="이 쇼츠의 주제 부분 {a:.0f}~{b:.0f}초"></div>')
+        marks += [f'<div class="voice" style="left:{pct(a)};width:{pct(b - a)}"></div>' for a, b in job.voices]
+        cuts = cut_times(str(job.dir), len(job.frames), job)
+        marks += [f'<div class="cut" style="left:{pct(t)}" title="컷 전환 {t:.1f}초"></div>' for t in cuts]
+        marks += [f'<div class="pos src" style="left:{pct(c["start"])};width:{pct(c["end"] - c["start"])}" '
+                  f'title="{i + 1}. {c["start"]:.1f}~{c["end"]:.1f}초">{i + 1}</div>'
+                  for i, c in enumerate(short["clips"]) if c in cards and c.get("kind") != "ai"]
+        rows.append(f'<div class="row"><span class="lab">원본 위치<br>0~{d:.0f}초</span><div class="track">{"".join(marks)}</div></div>')
+        if job.voices:
+            legend += '<i style="background:#3fa7d6"></i>목소리'
+        if cuts:
+            legend += '<i style="background:#f2c94c"></i>컷 전환 (구간을 늘려도 넘지 않음)'
+    st.html(TIMELINE_CSS + f'<div class="sm-tl">{"".join(rows)}<div class="legend">{legend}</div></div>')
+
+
 def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
     sid = short["id"]
     col_title, col_replan = st.columns([3, 1])
@@ -1314,7 +1439,11 @@ def short_editor(p: project.Project, short: dict, job: pipeline.Job) -> None:
             enqueue_plan(p, short)
             st.rerun()
 
-    raw_clips = clip_cards(p, short, job)
+    timeline(short, job)
+    vertical = job is not None and st.toggle(
+        "📱 카드를 세로 화면 미리보기로 보기", key=f"vertical_{sid}",
+        help="원본 구간 카드에 영상 대신, 지금 화면·자막 설정으로 그린 쇼츠 모습(구간 시작 장면 + 제목 + 나레이션)을 보여 줍니다.")
+    raw_clips = clip_cards(p, short, job, vertical)
     # 쇼츠를 만들 때 쓰는 카드 (원본 구간은 범위 맞춤, 대사 경계, 겹침 합치기)
     clips = pipeline.normalize_clips(job, raw_clips) if job else raw_clips
 
