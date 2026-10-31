@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-31
+
 ### Added
 - **공용 작업 큐**: 무거운 작업(영상 분석 + 구성, 구성 다시 만들기, 나레이션 다시 쓰기, 쇼츠 만들기, AI 장면, AI 배경음악, 목소리 미리 듣기)을 접속한 모든 사람이 같은 큐에 넣고 한 번에 하나씩 차례로 처리합니다. GPU·CPU·메모리가 한정되어 있어 여럿이 동시에 눌러도 겹쳐 돌지 않습니다.
   - 화면 위쪽 「🚦 작업 큐」에 진행 중인 작업(단계·진행 막대·지난 시간)과 대기 목록(순서, 예상 시작 시각)이 모든 사람에게 보입니다.
@@ -281,7 +283,8 @@
 - [docs/huggingface_streamlit_examples.md](docs/huggingface_streamlit_examples.md): Streamlit으로 배포하기 좋은 Hugging Face 예제 30선
 - [docs/huggingface_service_ideas.md](docs/huggingface_service_ideas.md): 모델 조합 프로젝트 아이디어 10선 (2026-10-29 비상업·난이도 순으로 개정)
 
-[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yeop88/test_video_maker_streamlit/compare/v0.3.0...v0.4.0
